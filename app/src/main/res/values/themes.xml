@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.PAS" parent="android:Theme.Material.Light.NoActionBar" />
+
+    <!-- Launcher/splash theme: shows splash_screen.xml as the window background at cold start -->
+    <style name="Theme.PAS.Launcher" parent="Theme.PAS">
+        <!-- Use windowBackground so older Android versions also show the splash -->
+        <item name="android:windowBackground">@drawable/splash_screen</item>
+        <!-- Automatically switch back to the main theme after splash -->
+        <item name="postSplashScreenTheme">@style/Theme.PAS</item>
+        <!-- Note: Android 12+ splash attributes were removed here because they were unresolved
+             in your project's compile configuration. If you update compileSdk to 31+ you may
+             add them into a values-v31/ themes file instead. -->
+    </style>
+</resources>

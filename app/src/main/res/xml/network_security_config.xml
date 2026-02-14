@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Allow cleartext (HTTP) and HTTPS for pkastro.com and all subdomains -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">pkastro.com</domain>
+        <domain includeSubdomains="true">www.pkastro.com</domain>
+    </domain-config>
+</network-security-config>

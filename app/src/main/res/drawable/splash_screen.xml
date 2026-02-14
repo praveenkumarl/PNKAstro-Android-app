@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Background color for the splash screen (replace color if you want a different background) -->
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#1a1a2e" />
+        </shape>
+    </item>
+
+    <!-- Centered brand image scaled to 60% of the screen width (preserve aspect ratio) -->
+    <item android:gravity="center">
+        <scale
+            android:drawable="@drawable/brand_logo"
+            android:scaleWidth="60%p"
+            android:useIntrinsicSizeAsMinimum="false"
+            android:scaleGravity="center" />
+    </item>
+</layer-list>
