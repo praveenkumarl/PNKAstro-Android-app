@@ -1,0 +1,21 @@
+Initial commit: PERIYANAYAKI ASTRO SOLUTION — WebView client with environment flavors and app-scoped device ID
+What this app does:
+- Loads a remote web app inside an in-app WebView after authenticating with server.
+- Preserves cookies from authentication and injects them into the WebView so session is maintained.
+- Appends location-based password params and an app-scoped device key when loading index.php.
+Summary of changes in this commit:
+- Added product flavors (dev/preprod/prod) in app/build.gradle.kts.
+  - dev: http://127.0.0.1/pkastro_test (AUTH_URL & SITE_URL)
+  - preprod: http://pkastro.com/preprod (AUTH_URL & SITE_URL)
+  - prod: http://pkastro.com (AUTH_URL & SITE_URL)
+- MainActivity: switched from string resources to BuildConfig.AUTH_URL/SITE_URL so flavors control endpoints.
+- Authentication URL construction now appends the app-scoped key (URL-encoded) as ?key=<id>.
+- Replaced use of ANDROID_ID/device-id with an app-scoped UUID stored in SharedPreferences to avoid device-id warnings.
+- Added TopAppBar menu item  Reset Device ID which regenerates and persists a new app-scoped ID and restarts auth flow.
+- WebView behavior: initial loads and navigations that target index.php include the key param; cookies from auth are injected into CookieManager.
+- UI: AppTopBar background set to royal blue, title and action icons set to golden yellow for better visibility.
+- Misc: improved WebView debugging, logging, timeout/retry behavior and safe URL encoding.
+Assemble output (build run):
+> Task :app:assemble
+BUILD SUCCESSFUL in 1m 48s
+85 actionable tasks: 60 executed, 25 up-to-date

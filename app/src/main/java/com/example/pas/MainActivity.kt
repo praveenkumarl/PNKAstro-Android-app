@@ -469,6 +469,9 @@ fun WebViewScreen(url: String, allowedHost: String?, permissionStatus: Boolean, 
                     setGeolocationEnabled(true)
                     // allow support for window.open/popups to be handled
                     setSupportMultipleWindows(true)
+                    // Enable pinch zoom for accessibility
+                    setBuiltInZoomControls(true)
+                    setDisplayZoomControls(false)
                 }
 
                 // Ensure cookies are enabled (some sites rely on cookies for auth/session)
@@ -837,21 +840,22 @@ fun AppTopBar(
     val showMenu = remember { mutableStateOf(false) }
 
     TopAppBar(
-        title = { Text(text = stringResource(id = brandRes), color = colorResource(id = R.color.black)) },
+        title = { Text(text = stringResource(id = brandRes), color = colorResource(id = R.color.golden_yellow)) },
         colors = TopAppBarDefaults.topAppBarColors(
-            containerColor = colorResource(id = R.color.orange75),
-            titleContentColor = colorResource(id = R.color.black)
+            containerColor = colorResource(id = R.color.royal_blue_100),
+            titleContentColor = colorResource(id = R.color.golden_yellow),
+            actionIconContentColor = colorResource(id = R.color.golden_yellow)
         ),
         modifier = modifier,
         actions = {
             if (currentUrl != null) {
                 IconButton(onClick = { onOpenInBrowser(currentUrl) }) {
-                    Icon(Icons.Filled.Share, contentDescription = "Open in browser")
+                    Icon(Icons.Filled.Share, contentDescription = "Open in browser", tint = colorResource(id = R.color.golden_yellow))
                 }
             }
 
             IconButton(onClick = { showMenu.value = true }) {
-                Icon(Icons.Default.MoreVert, contentDescription = "More options")
+                Icon(Icons.Default.MoreVert, contentDescription = "More options", tint = colorResource(id = R.color.golden_yellow))
             }
 
             DropdownMenu(

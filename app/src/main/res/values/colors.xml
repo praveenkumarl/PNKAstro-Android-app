@@ -10,6 +10,10 @@
     <color name="royal_blue_100">#4169E1</color>
     <!-- App bar color requested by the user -->
     <color name="orange75">#FFB347</color>
+    <!-- Full orange for app bar background -->
+    <color name="orange_full">#FFFF4500</color>
     <!-- Splash background color (was #1a1a2e) -->
     <color name="splash_background">#FF1A1A2E</color>
+    <!-- Golden yellow color for text -->
+    <color name="golden_yellow">#FFD700</color>
 </resources>
