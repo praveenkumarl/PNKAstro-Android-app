@@ -263,11 +263,30 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun authenticateAndGetUrl(deviceId: String, onResultUrl: (String?) -> Unit) {
-        val authUrl = getString(R.string.auth_url) + "?key=" + deviceId
-        val siteBase = getString(R.string.site_url)
+        // Prefer BuildConfig values injected via product flavors; fall back to string resources
+        val authBase = if (try { BuildConfig.AUTH_URL.isNotBlank() } catch (e: Exception) { false }) {
+            BuildConfig.AUTH_URL
+        } else {
+            getString(R.string.auth_url)
+        }
 
-        Log.d(TAG, "Starting authentication with URL: $authUrl")
-        Log.d(TAG, "Site base URL: $siteBase")
+        val siteBase = if (try { BuildConfig.SITE_URL.isNotBlank() } catch (e: Exception) { false }) {
+            BuildConfig.SITE_URL
+        } else {
+            getString(R.string.site_url)
+        }
+
+        // Append key param to auth URL safely (respect existing query params) and URL-encode the key
+        val authUrl = try {
+            val enc = java.net.URLEncoder.encode(deviceId, java.nio.charset.StandardCharsets.UTF_8.toString())
+            if (authBase.contains("?")) "$authBase&key=$enc" else "$authBase?key=$enc"
+        } catch (e: Exception) {
+            // fallback: naive append
+            if (authBase.contains("?")) "$authBase&key=$deviceId" else "$authBase?key=$deviceId"
+        }
+
+        Log.d(TAG, "Starting authentication with URL: $authUrl (base source: ${if (authBase == BuildConfig.AUTH_URL) "BuildConfig" else "strings.xml"})")
+        Log.d(TAG, "Site base URL: $siteBase (source: ${if (siteBase == BuildConfig.SITE_URL) "BuildConfig" else "strings.xml"})")
 
         // Launch coroutine tied to lifecycle
         lifecycleScope.launch {
@@ -801,7 +820,7 @@ fun LoadingScreen(modifier: Modifier = Modifier) {
         // Show the brand image centered (same asset used by splash). Replace with your drawable
         // file `brand_logo` (we created a `brand_logo.xml` that points to the mipmap foreground).
         Image(
-            painter = painterResource(id = R.drawable.brand_logo),
+            painter = painterResource(id = R.drawable.brand_logo1),
             contentDescription = "Brand logo",
             modifier = Modifier.fillMaxWidth(0.6f),
             contentScale = ContentScale.Fit

@@ -9,7 +9,7 @@ import kotlinx.coroutines.launch
 
 class SplashActivity : ComponentActivity() {
     // duration to show the splash (milliseconds)
-    private val splashDurationMs = 1500L
+    private val splashDurationMs = 1200L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // Use the launcher theme (windowBackground) to avoid a white flash during cold start

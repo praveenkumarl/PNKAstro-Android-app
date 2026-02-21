@@ -18,6 +18,36 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    flavorDimensions += "environment"
+    productFlavors {
+        create("dev") {
+            dimension = "environment"
+            applicationIdSuffix = ".dev"
+            versionNameSuffix = "-dev"
+            buildConfigField("String", "AUTH_URL", "\"http://127.0.0.1/pkastro_test/athenticate_mobile.php\"")
+            buildConfigField("String", "SITE_URL", "\"http://127.0.0.1/pkastro_test/index.php\"")
+        }
+        create("preprod") {
+            dimension = "environment"
+            buildConfigField("String", "AUTH_URL", "\"http://pkastro.com/preprod/athenticate_mobile.php\"")
+            buildConfigField("String", "SITE_URL", "\"http://pkastro.com/preprod/index.php\"")
+        }
+        create("prod") {
+            dimension = "environment"
+            buildConfigField("String", "AUTH_URL", "\"http://pkastro.com/athenticate_mobile.php\"")
+            buildConfigField("String", "SITE_URL", "\"http://pkastro.com/index.php\"")
+        }
+    }
+
+    signingConfigs {
+        create("release") {
+            storeFile = file("D:\\praveen\\PAS\\keystore.jks") // Replace with your keystore file
+            storePassword = "324266" // Replace with your keystore password
+            keyAlias = "PAS" // Replace with your key alias
+            keyPassword = "324266" // Replace with your key password
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -25,6 +55,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            signingConfig = signingConfigs.getByName("release")
         }
     }
     compileOptions {

@@ -10,7 +10,7 @@
     <!-- Centered brand image scaled to 60% of the screen width (preserve aspect ratio) -->
     <item android:gravity="center">
         <scale
-            android:drawable="@drawable/brand_logo"
+            android:drawable="@drawable/brand_logo1"
             android:scaleWidth="60%p"
             android:useIntrinsicSizeAsMinimum="false"
             android:scaleGravity="center" />
