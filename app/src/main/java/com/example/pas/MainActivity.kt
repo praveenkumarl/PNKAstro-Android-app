@@ -82,6 +82,11 @@ import androidx.compose.ui.res.stringResource
 import androidx.core.view.WindowCompat
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import android.app.AlertDialog
+import android.view.Menu
+import android.view.MenuItem
+import androidx.appcompat.widget.Toolbar
+import androidx.webkit.WebViewCompat
 
 class MainActivity : ComponentActivity() {
     private val TAG = "PAS_AUTH"
@@ -152,8 +157,10 @@ class MainActivity : ComponentActivity() {
         val webUrlState = mutableStateOf<String?>(null)
         val allowedHostState = mutableStateOf<String?>(null)
 
-        // Enable WebView remote debugging so you can inspect the WebView from desktop Chrome when debugging APKs
-        WebView.setWebContentsDebuggingEnabled(true)
+        // Enable WebView remote debugging for development
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.KITKAT) {
+            WebView.setWebContentsDebuggingEnabled(true)
+        }
 
         // Set the Compose UI immediately
         setContent {
@@ -449,6 +456,40 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    // Set up the menu
+    override fun onCreateOptionsMenu(menu: Menu?): Boolean {
+        menuInflater.inflate(R.menu.main_menu, menu)
+        return true
+    }
+
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        return when (item.itemId) {
+            R.id.action_about -> {
+                showAboutDialog()
+                true
+            }
+            else -> super.onOptionsItemSelected(item)
+        }
+    }
+
+    private fun showAboutDialog() {
+        try {
+            val versionName = packageManager.getPackageInfo(packageName, 0).versionName
+            AlertDialog.Builder(this)
+                .setTitle(getString(R.string.app_name))
+                .setMessage("Version: $versionName")
+                .setPositiveButton("OK", null)
+                .show()
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Error fetching version name: ${e.message}")
+            AlertDialog.Builder(this)
+                .setTitle("Error")
+                .setMessage("Unable to fetch app version.")
+                .setPositiveButton("OK", null)
+                .show()
+        }
+    }
 }
 
 @Composable
@@ -511,8 +552,8 @@ fun WebViewScreen(url: String, allowedHost: String?, permissionStatus: Boolean, 
                         val host = uri.host
                         val urlString = uri.toString()
 
-                        // Only intercept if it's our allowed host and doesn't already have the password
-                        if ((allowedHost == null || host == allowedHost) && !urlString.contains("password=")) {
+                        // Intercept if it's our allowed host - always append fresh location for new navigations
+                        if (allowedHost == null || host == allowedHost) {
                             val activityForNav = (ctx as? ComponentActivity)
                             activityForNav?.lifecycleScope?.launch {
                                 val loc = getCurrentLocation(ctx)
@@ -542,7 +583,7 @@ fun WebViewScreen(url: String, allowedHost: String?, permissionStatus: Boolean, 
                             }
                             return true
                         }
-                        return false // Let WebView handle normal navigation (including urls with password)
+                        return false // Let WebView handle navigation for other hosts
                     }
 
                     override fun onPageFinished(view: WebView, url: String?) {
@@ -820,7 +861,7 @@ fun LoadingScreen(modifier: Modifier = Modifier) {
         // Show the brand image centered (same asset used by splash). Replace with your drawable
         // file `brand_logo` (we created a `brand_logo.xml` that points to the mipmap foreground).
         Image(
-            painter = painterResource(id = R.drawable.brand_logo1),
+            painter = painterResource(id = R.drawable.brand_logo),
             contentDescription = "Brand logo",
             modifier = Modifier.fillMaxWidth(0.6f),
             contentScale = ContentScale.Fit

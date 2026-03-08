@@ -85,6 +85,10 @@ dependencies {
     implementation("androidx.browser:browser:1.6.0")
     implementation("com.google.android.gms:play-services-location:21.0.1")
     implementation(libs.androidx.core.splashscreen)
+    implementation("androidx.appcompat:appcompat:1.6.1") // Add AppCompat library
+    implementation("androidx.webkit:webkit:1.8.0")
+    implementation(libs.androidx.appcompat)
+    implementation(libs.androidx.webkit) // Add WebKit library for WebView support
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

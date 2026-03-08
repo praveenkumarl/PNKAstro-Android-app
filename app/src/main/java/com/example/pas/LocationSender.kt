@@ -15,7 +15,7 @@ import kotlin.coroutines.resume
 
 private var cachedLocation: android.location.Location? = null
 private var lastLocationTime: Long = 0
-private const val LOCATION_CACHE_EXPIRY_MS = 1000 * 60 * 5 // 5 minutes
+private const val LOCATION_CACHE_EXPIRY_MS = 1000 * 2 // 2 seconds - very short cache to detect location changes quickly
 
 /**
  * Append the password param (encoded lat,lon) to the provided baseUrl.

@@ -7,11 +7,12 @@
         </shape>
     </item>
 
-    <!-- Centered brand image scaled to 60% of the screen width (preserve aspect ratio) -->
+    <!-- Centered brand image scaled to fill the screen (preserve aspect ratio by scaling up) -->
     <item android:gravity="center">
         <scale
-            android:drawable="@drawable/brand_logo1"
-            android:scaleWidth="60%p"
+            android:drawable="@drawable/brand_logo"
+            android:scaleWidth="100%p"
+            android:scaleHeight="100%p"
             android:useIntrinsicSizeAsMinimum="false"
             android:scaleGravity="center" />
     </item>
