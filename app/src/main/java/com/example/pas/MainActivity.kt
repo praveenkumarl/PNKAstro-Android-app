@@ -78,6 +78,9 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.core.net.toUri
 import androidx.compose.ui.res.stringResource
 
+// Add Uri import for query manipulation
+import android.net.Uri
+
 // Imports for window insets and status bar
 import androidx.core.view.WindowCompat
 import androidx.compose.material3.TopAppBarDefaults
@@ -556,28 +559,8 @@ fun WebViewScreen(url: String, allowedHost: String?, permissionStatus: Boolean, 
                         if (allowedHost == null || host == allowedHost) {
                             val activityForNav = (ctx as? ComponentActivity)
                             activityForNav?.lifecycleScope?.launch {
-                                val loc = getCurrentLocation(ctx)
-                                val finalUrl = if (loc != null) {
-                                    // if this navigation targets index.php, include device key
-                                    if (urlString.contains("index.php") && !deviceId.isNullOrEmpty()) {
-                                        appendPasswordParam(urlString, loc.latitude, loc.longitude, deviceId)
-                                    } else {
-                                        appendPasswordParam(urlString, loc.latitude, loc.longitude)
-                                    }
-                                } else {
-                                    // ensure we append even if loc is null to avoid infinite loop
-                                    val fallback = if (urlString.contains("?")) "$urlString&password=noperm" else "$urlString?password=noperm"
-                                    if (fallback.contains("index.php") && !deviceId.isNullOrEmpty()) {
-                                        try {
-                                            val encodedKey = java.net.URLEncoder.encode(deviceId, java.nio.charset.StandardCharsets.UTF_8.toString())
-                                            "$fallback&key=$encodedKey"
-                                        } catch (e: Exception) {
-                                            fallback
-                                        }
-                                    } else {
-                                        fallback
-                                    }
-                                }
+                                // Use centralized helper to build URL with fresh location and key replacement
+                                val finalUrl = buildUrlWithFreshLocation(ctx, urlString, deviceId)
                                 Log.d("WebView", "Loading URL with location via override: $finalUrl")
                                 view?.loadUrl(finalUrl)
                             }
@@ -729,28 +712,11 @@ fun WebViewScreen(url: String, allowedHost: String?, permissionStatus: Boolean, 
                 // load the initial url with location
                 val activityForInit = (ctx as? ComponentActivity)
                 activityForInit?.lifecycleScope?.launch {
-                    val loc = getCurrentLocation(ctx)
-                    wasNoPerm.value = (loc == null)
+                    val finalUrl = buildUrlWithFreshLocation(ctx, url, deviceId)
 
-                    val finalUrl = if (loc != null) {
-                        if (url.contains("index.php") && !deviceId.isNullOrEmpty()) {
-                            appendPasswordParam(url, loc.latitude, loc.longitude, deviceId)
-                        } else {
-                            appendPasswordParam(url, loc.latitude, loc.longitude)
-                        }
-                    } else {
-                        val base = if (url.contains("?")) "$url&password=noperm" else "$url?password=noperm"
-                        if (base.contains("index.php") && !deviceId.isNullOrEmpty()) {
-                            try {
-                                val encodedKey = java.net.URLEncoder.encode(deviceId, java.nio.charset.StandardCharsets.UTF_8.toString())
-                                "$base&key=$encodedKey"
-                            } catch (e: Exception) {
-                                base
-                            }
-                        } else {
-                            base
-                        }
-                    }
+                    // remember whether initial load was done without a real location (used to trigger reload when permissions granted)
+                    wasNoPerm.value = finalUrl.contains("noperm") || finalUrl.contains("noperm")
+
                     Log.d("WebView", "Initial load with location: $finalUrl")
                     loadUrl(finalUrl)
                 }
@@ -764,13 +730,8 @@ fun WebViewScreen(url: String, allowedHost: String?, permissionStatus: Boolean, 
                 wasNoPerm.value = false
                 val activity = context as? ComponentActivity
                 activity?.lifecycleScope?.launch {
-                    val loc = getCurrentLocation(context)
-                    if (loc != null) {
-                        val finalUrl = if (url.contains("index.php") && !deviceId.isNullOrEmpty()) {
-                            appendPasswordParam(url, loc.latitude, loc.longitude, deviceId)
-                        } else {
-                            appendPasswordParam(url, loc.latitude, loc.longitude)
-                        }
+                    val finalUrl = buildUrlWithFreshLocation(context, url, deviceId)
+                    if (!finalUrl.isNullOrEmpty()) {
                         Log.d("WebView", "Permission granted! Reloading with real location: $finalUrl")
                         webview.loadUrl(finalUrl)
                     }
@@ -778,16 +739,7 @@ fun WebViewScreen(url: String, allowedHost: String?, permissionStatus: Boolean, 
             } else if (lastUrl.value != url) {
                 val activityForUpdate = (context as? ComponentActivity)
                 activityForUpdate?.lifecycleScope?.launch {
-                    val loc = getCurrentLocation(context)
-                    val finalUrl = if (loc != null) {
-                        if (url.contains("index.php") && !deviceId.isNullOrEmpty()) {
-                            appendPasswordParam(url, loc.latitude, loc.longitude, deviceId)
-                        } else {
-                            appendPasswordParam(url, loc.latitude, loc.longitude)
-                        }
-                    } else {
-                        url
-                    }
+                    val finalUrl = buildUrlWithFreshLocation(context, url, deviceId)
                     Log.d("WebView", "Updating URL: $finalUrl")
                     webview.loadUrl(finalUrl)
                 }
@@ -944,4 +896,77 @@ fun AppTopBar(
             }
         }
     )
+}
+
+// Helper: build a URL by replacing/adding the `password` param (lat,lon) and `key` when index.php is present.
+// This centralizes all URL modifications so every top-level navigation gets a fresh location appended.
+private suspend fun buildUrlWithFreshLocation(context: Context, originalUrl: String, deviceId: String?): String {
+    return try {
+        // Try to get current location on IO thread; getCurrentLocation may block or be suspend depending on implementation
+        val loc = withContext(Dispatchers.IO) { getCurrentLocation(context) }
+
+        // Decide password value
+        val passwordValue = if (loc != null) {
+            "${loc.latitude},${loc.longitude}"
+        } else {
+            // keep the same fallback token used elsewhere
+            "noperm"
+        }
+
+        // Use Uri to manipulate query parameters safely
+        val uri = Uri.parse(originalUrl)
+        val builder = uri.buildUpon()
+        builder.clearQuery()
+
+        // Collect existing params into a LinkedHashMap to preserve order (optional)
+        val params = mutableMapOf<String, MutableList<String>>()
+        try {
+            for (name in uri.queryParameterNames) {
+                params[name] = uri.getQueryParameters(name).toMutableList()
+            }
+        } catch (e: Exception) {
+            // ignore parsing errors and fall back to naive append below
+        }
+
+        // Replace or add password param
+        params["password"] = mutableListOf(passwordValue)
+
+        // If URL targets index.php and we have a deviceId, ensure key param is set/replaced
+        if (originalUrl.contains("index.php") && !deviceId.isNullOrEmpty()) {
+            try {
+                val encodedKey = java.net.URLEncoder.encode(deviceId, java.nio.charset.StandardCharsets.UTF_8.toString())
+                params["key"] = mutableListOf(encodedKey)
+            } catch (e: Exception) {
+                params["key"] = mutableListOf(deviceId)
+            }
+        }
+
+        // Rebuild query
+        for ((k, vlist) in params) {
+            for (v in vlist) {
+                builder.appendQueryParameter(k, v)
+            }
+        }
+
+        // Preserve fragment if present
+        if (uri.fragment != null) builder.fragment(uri.fragment)
+
+        builder.build().toString()
+    } catch (e: Exception) {
+        // Fallback: simple append when safe parsing fails
+        try {
+            val base = if (originalUrl.contains("?")) "$originalUrl&password=noperm" else "$originalUrl?password=noperm"
+            if (originalUrl.contains("index.php") && !deviceId.isNullOrEmpty()) {
+                try {
+                    val encodedKey = java.net.URLEncoder.encode(deviceId, java.nio.charset.StandardCharsets.UTF_8.toString())
+                    return "$base&key=$encodedKey"
+                } catch (ex: Exception) {
+                    return "$base&key=$deviceId"
+                }
+            }
+            base
+        } catch (ex: Exception) {
+            originalUrl
+        }
+    }
 }

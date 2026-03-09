@@ -29,11 +29,14 @@ android {
         }
         create("preprod") {
             dimension = "environment"
+            applicationIdSuffix = ".preprod"
+            versionNameSuffix = "-preprod"
             buildConfigField("String", "AUTH_URL", "\"http://pkastro.com/preprod/athenticate_mobile.php\"")
             buildConfigField("String", "SITE_URL", "\"http://pkastro.com/preprod/index.php\"")
         }
         create("prod") {
             dimension = "environment"
+            // Keep original applicationId for prod
             buildConfigField("String", "AUTH_URL", "\"http://pkastro.com/athenticate_mobile.php\"")
             buildConfigField("String", "SITE_URL", "\"http://pkastro.com/index.php\"")
         }
@@ -77,37 +80,35 @@ android {
 // This task is non-invasive: it only renames files under build/outputs/apk after assemble tasks complete.
 tasks.register("renameApks") {
     doLast {
-        val apkRoot = file("build/outputs/apk")
+        val apkRoot = layout.buildDirectory.dir("outputs/apk").get().asFile
         if (!apkRoot.exists()) {
             println("renameApks: APK output directory not found: ${apkRoot.absolutePath}")
             return@doLast
         }
 
-        val versionName = try { android.defaultConfig.versionName.toString() } catch (_: Exception) { "0.0.0" }
         val brand = "PNKAstro"
 
         apkRoot.walkTopDown().filter { it.isFile && it.extension.equals("apk", ignoreCase = true) }.forEach { apkFile ->
-            try {
-                // Expect path like build/outputs/apk/<env>/<buildType>/*.apk
-                val buildType = apkFile.parentFile?.name ?: "unknown"
-                val env = apkFile.parentFile?.parentFile?.name ?: "generic"
+            // Skip already renamed files to avoid infinite loops or double renaming
+            if (apkFile.name.startsWith(brand)) return@forEach
 
-                val newName = "${brand}-${env}-${buildType}-v${versionName}.apk"
-                val newFile = apkFile.resolveSibling(newName)
+            try {
+                // Better path parsing: build/outputs/apk/<flavor>/<buildType>/app-<flavor>-<buildType>.apk
+                val buildType = apkFile.parentFile?.name ?: "unknown"
+                val flavor = apkFile.parentFile?.parentFile?.name ?: "generic"
+
+                // Get version name from the project
+                val versionName = android.defaultConfig.versionName ?: "1.0"
+
+                val newName = "${brand}-${flavor}-${buildType}-v${versionName}.apk"
+                val newFile = File(apkFile.parentFile, newName)
 
                 if (newFile.exists()) {
-                    // avoid overwriting; delete existing so rename succeeds
                     newFile.delete()
                 }
 
-                val moved = apkFile.renameTo(newFile)
-                if (moved) {
+                if (apkFile.renameTo(newFile)) {
                     println("renameApks: Renamed ${apkFile.name} -> ${newName}")
-                } else {
-                    // Try copy+delete as fallback
-                    newFile.outputStream().use { out -> apkFile.inputStream().use { it.copyTo(out) } }
-                    apkFile.delete()
-                    println("renameApks: Copied ${apkFile.name} -> ${newName} (fallback)")
                 }
             } catch (e: Exception) {
                 println("renameApks: Failed to rename ${apkFile.absolutePath}: ${e.message}")
@@ -116,7 +117,7 @@ tasks.register("renameApks") {
     }
 }
 
-// Ensure the rename task runs after assemble tasks complete
+// Ensure the rename task runs automatically after any assemble task
 tasks.matching { it.name.startsWith("assemble") }.configureEach {
     finalizedBy(tasks.named("renameApks"))
 }
