@@ -1,4 +1,4 @@
-package com.example.pas
+package com.pnkastro.pas
 
 import org.junit.Test
 

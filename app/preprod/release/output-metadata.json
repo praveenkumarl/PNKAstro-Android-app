@@ -4,15 +4,15 @@
     "type": "APK",
     "kind": "Directory"
   },
-  "applicationId": "com.example.pas",
+  "applicationId": "com.pnkastro.pas.preprod",
   "variantName": "preprodRelease",
   "elements": [
     {
       "type": "SINGLE",
       "filters": [],
       "attributes": [],
-      "versionCode": 1,
-      "versionName": "1.0",
+      "versionCode": 4,
+      "versionName": "4.0-preprod",
       "outputFile": "app-preprod-release.apk"
     }
   ],

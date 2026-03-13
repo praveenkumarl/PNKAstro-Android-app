@@ -2,18 +2,19 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.serialization)
 }
 
 android {
-    namespace = "com.example.pas"
+    namespace = "com.pnkastro.pas"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.example.pas"
+        applicationId = "com.pnkastro.pas"
         minSdk = 24
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 4
+        versionName = "4.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -26,6 +27,8 @@ android {
             versionNameSuffix = "-dev"
             buildConfigField("String", "AUTH_URL", "\"http://127.0.0.1/pkastro_test/athenticate_mobile.php\"")
             buildConfigField("String", "SITE_URL", "\"http://127.0.0.1/pkastro_test/index.php\"")
+            buildConfigField("String", "TRIAL_URL", "\"http://127.0.0.1/pkastro_test/new_registration_mobile_trial.php\"")
+            buildConfigField("String", "ENV_NAME", "\"DEV\"")
         }
         create("preprod") {
             dimension = "environment"
@@ -33,12 +36,16 @@ android {
             versionNameSuffix = "-preprod"
             buildConfigField("String", "AUTH_URL", "\"http://pkastro.com/preprod/athenticate_mobile.php\"")
             buildConfigField("String", "SITE_URL", "\"http://pkastro.com/preprod/index.php\"")
+            buildConfigField("String", "TRIAL_URL", "\"http://pkastro.com/preprod/new_registration_mobile_trial.php\"")
+            buildConfigField("String", "ENV_NAME", "\"PREPROD\"")
         }
         create("prod") {
             dimension = "environment"
             // Keep original applicationId for prod
             buildConfigField("String", "AUTH_URL", "\"http://pkastro.com/athenticate_mobile.php\"")
             buildConfigField("String", "SITE_URL", "\"http://pkastro.com/index.php\"")
+            buildConfigField("String", "TRIAL_URL", "\"http://pkastro.com/new_registration_mobile_trial.php\"")
+            buildConfigField("String", "ENV_NAME", "\"PROD\"")
         }
     }
 
@@ -123,23 +130,22 @@ tasks.matching { it.name.startsWith("assemble") }.configureEach {
 }
 
 dependencies {
-
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
-    implementation(libs.androidx.fragment)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.ui)
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
-    implementation("androidx.browser:browser:1.6.0")
-    implementation("com.google.android.gms:play-services-location:21.0.1")
     implementation(libs.androidx.core.splashscreen)
-    implementation("androidx.appcompat:appcompat:1.6.1") // Add AppCompat library
-    implementation("androidx.webkit:webkit:1.8.0")
+    implementation(libs.androidx.fragment)
     implementation(libs.androidx.appcompat)
-    implementation(libs.androidx.webkit) // Add WebKit library for WebView support
+    implementation(libs.androidx.webkit)
+    implementation(libs.kotlinx.serialization.json)
+    implementation(libs.google.play.services.location)
+    implementation(libs.browser)
+    implementation(libs.okhttp)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
