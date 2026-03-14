@@ -67,7 +67,9 @@ class TrialWebViewActivity : ComponentActivity() {
                 view?.evaluateJavascript(
                     "(function() { return document.body.innerText; })();"
                 ) { jsonString ->
-                    handleJsonResponse(jsonString)
+                    if (jsonString != null && jsonString != "null" && jsonString.isNotBlank()) {
+                        handleJsonResponse(jsonString)
+                    }
                 }
             }
 
@@ -106,14 +108,25 @@ class TrialWebViewActivity : ComponentActivity() {
     }
 
     private fun handleJsonResponse(rawJson: String?) {
-        if (rawJson == null || rawJson == "null") return
+        if (rawJson == null || rawJson == "null" || rawJson.isBlank()) return
 
-        // Clean the string from evaluateJavascript (it might be wrapped in quotes)
+        // Clean the string from evaluateJavascript (it's wrapped in double quotes and escaped)
         var json = rawJson.trim()
         if (json.startsWith("\"") && json.endsWith("\"")) {
             json = json.substring(1, json.length - 1)
                 .replace("\\\"", "\"")
                 .replace("\\\\", "\\")
+                .replace("\\n", "\n")
+                .replace("\\r", "\r")
+        }
+
+        // Try to find the first '{' and last '}' in case of extra text
+        val start = json.indexOf('{')
+        val end = json.lastIndexOf('}')
+        if (start != -1 && end != -1 && end > start) {
+            json = json.substring(start, end + 1)
+        } else {
+            return // Not valid JSON
         }
 
         try {
@@ -131,25 +144,25 @@ class TrialWebViewActivity : ComponentActivity() {
                 setResult(Activity.RESULT_OK, intent)
                 Toast.makeText(this, response.message ?: "Trial activated", Toast.LENGTH_LONG).show()
                 finish()
-            } else if (response.error != null) {
-                // Handle various error codes if needed, but the requirement is to show error field
+            } else if (!response.error.isNullOrBlank()) {
                 val errorMsg = response.error
                 Log.e(TAG, "Trial error: $errorMsg ${response.debug_error ?: ""}")
                 Toast.makeText(this, errorMsg, Toast.LENGTH_LONG).show()
 
-                // If it's a conflict (already active), we might want to finish anyway
+                // For conflict 409 (device already has active trial), navigate to home
                 if (errorMsg.contains("already has an active trial", ignoreCase = true)) {
                     val intent = Intent().apply {
                         putExtra("activated", true)
                         putExtra("expiry", response.trial_expires_at ?: "")
+                        putExtra("message", errorMsg)
                     }
                     setResult(Activity.RESULT_OK, intent)
                     finish()
                 }
             }
         } catch (e: Exception) {
-            // Not valid JSON or different format, ignore and let user interact with WebView
-            Log.d(TAG, "Not a trial JSON response: ${e.message}")
+            // Not valid trial JSON, ignore and let user interact with WebView
+            Log.d(TAG, "JSON parsing failed or not a trial response: ${e.message}")
         }
     }
 }
