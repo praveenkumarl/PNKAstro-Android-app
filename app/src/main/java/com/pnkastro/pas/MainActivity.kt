@@ -273,6 +273,30 @@ class MainActivity : ComponentActivity() {
                             },
                             onAboutRequested = {
                                 showAboutDialog.value = true
+                            },
+                            onShareRequested = {
+                                val urlToShare = webUrlState.value ?: ""
+                                if (urlToShare.isNotEmpty()) {
+                                    val sendIntent = Intent().apply {
+                                        action = Intent.ACTION_SEND
+                                        putExtra(Intent.EXTRA_TEXT, urlToShare)
+                                        type = "text/plain"
+                                        setPackage("com.whatsapp")
+                                    }
+                                    try {
+                                        composeContext.startActivity(sendIntent)
+                                    } catch (e: Exception) {
+                                        // WhatsApp not installed, fallback to generic share
+                                        val genericIntent = Intent().apply {
+                                            action = Intent.ACTION_SEND
+                                            putExtra(Intent.EXTRA_TEXT, urlToShare)
+                                            type = "text/plain"
+                                        }
+                                        composeContext.startActivity(Intent.createChooser(genericIntent, "Share via"))
+                                    }
+                                } else {
+                                    Toast.makeText(composeContext, "Nothing to share", Toast.LENGTH_SHORT).show()
+                                }
                             }
                         )
                     },
@@ -1068,6 +1092,7 @@ fun AppTopBar(
     onRegisterRequested: () -> Unit,
     onTryRequested: () -> Unit,
     onAboutRequested: () -> Unit,
+    onShareRequested: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -1097,6 +1122,17 @@ fun AppTopBar(
                 expanded = showMenu.value,
                 onDismissRequest = { showMenu.value = false }
             ) {
+                DropdownMenuItem(
+                    text = { Text(text = "Share with WhatsApp") },
+                    onClick = {
+                        coroutineScope.launch {
+                            showMenu.value = false
+                            kotlinx.coroutines.delay(120)
+                            onShareRequested()
+                        }
+                    }
+                )
+
                 DropdownMenuItem(
                     text = { Text(text = "About App") },
                     onClick = {

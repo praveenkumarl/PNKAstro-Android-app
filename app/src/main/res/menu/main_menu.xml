@@ -9,4 +9,8 @@
         android:id="@+id/action_about"
         android:title="About"
         android:showAsAction="never" />
-</menu>
+
+    <item
+        android:id="@+id/action_share"
+        android:title="@string/share"
+        android:showAsAction="never" />

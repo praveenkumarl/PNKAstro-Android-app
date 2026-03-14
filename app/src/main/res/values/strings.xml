@@ -13,4 +13,6 @@
     <string name="try_it">Try it</string>
     <!-- Base URL for the trial registration endpoint (no query params) -->
     <string name="trial_url">https://pkastro.com/preprod/new_registration_mobile_trial.php</string>
-</resources>
+
+    <!-- Label for sharing action -->
+    <string name="share">Share</string>
