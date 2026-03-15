@@ -1,18 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">PNKAstro</string>
-    <!-- Authentication endpoint that accepts ?key=<android_id> -->
-    <string name="auth_url">http://pkastro.com/preprod/athenticate_mobile.php</string>
+    <!-- Authentication endpoint that accepts ?key=&lt;android_id&gt; -->
+    <string name="auth_url">http://pkastro.com/athenticate_mobile.php</string>
     <!-- Base site URL to open after authentication with index.php included -->
-    <string name="site_url">http://pkastro.com/preprod/index.php</string>
+    <string name="site_url">http://pkastro.com/index.php</string>
 
     <!-- Content description for splash screen logo -->
     <string name="splash_logo_desc">Brand logo</string>
     <!-- Example image URL for widget testing (use HTTPS to avoid cleartext/network rules) -->
-    <string name="widget_url">https://pkastro.com/preprod/chart_images/jamakol.png</string>
+    <string name="widget_url">https://pkastro.com/chart_images/jamakol.png</string>
     <!-- Label for trial menu entry -->
     <string name="try_it">Try it</string>
     <!-- Base URL for the trial registration endpoint (no query params) -->
-    <string name="trial_url">https://pkastro.com/preprod/new_registration_mobile_trial.php</string>
+    <string name="trial_url">https://pkastro.com/new_registration_mobile_trial.php</string>
 
     <!-- Label for sharing action -->
     <string name="share">Share</string>
+</resources>

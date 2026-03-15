@@ -512,6 +512,19 @@ class MainActivity : ComponentActivity() {
                                     ""
                                 }
                                 Log.d(TAG, "Response body length: ${responseBody.length}")
+                                Log.d(TAG, "Full Auth Response Body: $responseBody")
+
+                                // Check for automatic trial registration trigger from auth endpoint
+                                if (responseBody.contains("\"action\":\"register\"") && responseBody.contains("\"imei\":")) {
+                                    Log.d(TAG, "Server requested trial registration via JSON response. Switching to trial flow.")
+                                    conn.disconnect()
+                                    withContext(Dispatchers.Main) {
+                                        Toast.makeText(this@MainActivity, "Redirecting to trial registration...", Toast.LENGTH_SHORT).show()
+                                        launchTrialFlow()
+                                    }
+                                    return@withContext null // Stop normal flow as we're opening the Trial Activity
+                                }
+
                                 conn.disconnect()
 
                                 // Store cookies in WebView's CookieManager so they persist
@@ -604,8 +617,9 @@ class MainActivity : ComponentActivity() {
                 Log.d(TAG, "Authentication successful, will open in-app: $resultUrl")
                 onResultUrl(resultUrl)
             } else {
-                Log.d(TAG, "Authentication failed - no URL returned")
-                Toast.makeText(this@MainActivity, "Authentication failed. Please try again.", Toast.LENGTH_LONG).show()
+                // If resultUrl is null, it might be because we intercepted a trial registration
+                // We only want to show the failure toast if it wasn't a redirected trial flow
+                Log.d(TAG, "Authentication finished - no URL returned (check if trial flow was launched)")
                 onResultUrl(null)
             }
         }
