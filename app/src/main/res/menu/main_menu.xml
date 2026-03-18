@@ -1,18 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<menu xmlns:android="http://schemas.android.com/apk/res/android">
-    <item
-        android:id="@+id/action_try"
-        android:title="@string/try_it"
-        android:showAsAction="never" />
-
-    <item
-        android:id="@+id/action_about"
-        android:title="About"
-        android:showAsAction="never" />
+<menu xmlns:android="http://schemas.android.com/apk/res/android"
+      xmlns:app="http://schemas.android.com/apk/res-auto">
 
     <item
         android:id="@+id/action_share"
         android:title="@string/share"
-        android:showAsAction="never" />
+        app:showAsAction="never" />
 
 </menu>

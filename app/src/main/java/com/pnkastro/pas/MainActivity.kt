@@ -57,16 +57,24 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.compose.runtime.LaunchedEffect
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
-import java.security.MessageDigest
 import android.provider.Settings
 import android.content.Intent
 import android.app.Activity
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import androidx.core.content.FileProvider
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import android.media.MediaDrm
+import java.io.File
+import java.io.FileOutputStream
+import java.security.MessageDigest
+import java.util.UUID
 
 class MainActivity : ComponentActivity() {
     private val TAG = "PAS_AUTH"
@@ -119,10 +127,41 @@ class MainActivity : ComponentActivity() {
     private var webUrlState = mutableStateOf<String?>(null)
     private var allowedHostState = mutableStateOf<String?>(null)
 
-    private fun getRawAndroidId(): String {
+    private fun getMediaDrmId(): String {
         return try {
-            Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID) ?: ""
+            val widevineUuid = UUID(-0x121074568629b532L, -0x3566d56ef403bdcfL)
+            val mediaDrm = MediaDrm(widevineUuid)
+            val deviceUniqueId = mediaDrm.getPropertyByteArray(MediaDrm.PROPERTY_DEVICE_UNIQUE_ID)
+            mediaDrm.release()
+
+            // Convert byte array to a hex string or base64
+            deviceUniqueId.joinToString("") { "%02x".format(it) }
         } catch (e: Exception) {
+            Log.e("PAS_AUTH", "MediaDrm ID failed: ${e.message}")
+            ""
+        }
+    }
+
+    private fun getRawAndroidId(): String {
+        // Try MediaDrm ID first as it's more stable across uninstalls
+        val drmId = getMediaDrmId()
+        val rawId = if (drmId.isNotEmpty()) drmId else {
+            try {
+                Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID) ?: ""
+            } catch (e: Exception) {
+                ""
+            }
+        }
+
+        return if (rawId.isNotEmpty()) {
+            try {
+                val digest = MessageDigest.getInstance("SHA-256")
+                val hash = digest.digest(rawId.toByteArray(StandardCharsets.UTF_8))
+                hash.joinToString("") { "%02x".format(it) }
+            } catch (e: Exception) {
+                rawId
+            }
+        } else {
             ""
         }
     }
@@ -238,6 +277,9 @@ class MainActivity : ComponentActivity() {
             WebView.setWebContentsDebuggingEnabled(true)
         }
 
+        // This is necessary to capture content outside the visible area (full page)
+        android.webkit.WebView.enableSlowWholeDocumentDraw()
+
         // Set the Compose UI immediately
         setContent {
             PASTheme {
@@ -251,6 +293,7 @@ class MainActivity : ComponentActivity() {
                 val coroutineScope = rememberCoroutineScope()
                 // Capture the Compose context once so non-composable lambdas can use it safely
                 val composeContext = LocalContext.current
+                val rootView = LocalView.current
 
                 Scaffold(
                     topBar = {
@@ -275,27 +318,61 @@ class MainActivity : ComponentActivity() {
                                 showAboutDialog.value = true
                             },
                             onShareRequested = {
-                                val urlToShare = webUrlState.value ?: ""
-                                if (urlToShare.isNotEmpty()) {
-                                    val sendIntent = Intent().apply {
-                                        action = Intent.ACTION_SEND
-                                        putExtra(Intent.EXTRA_TEXT, urlToShare)
-                                        type = "text/plain"
-                                        setPackage("com.whatsapp")
-                                    }
+                                coroutineScope.launch {
                                     try {
-                                        composeContext.startActivity(sendIntent)
-                                    } catch (e: Exception) {
-                                        // WhatsApp not installed, fallback to generic share
-                                        val genericIntent = Intent().apply {
-                                            action = Intent.ACTION_SEND
-                                            putExtra(Intent.EXTRA_TEXT, urlToShare)
-                                            type = "text/plain"
+                                        val webView = findWebViewInView(rootView)
+                                        if (webView != null) {
+                                            // Get the scale to convert density-independent pixels to physical pixels
+                                            val scale = webView.scale
+                                            val width = webView.width
+                                            // Use contentHeight (which is in DP) converted to pixels
+                                            val height = (webView.contentHeight * scale).toInt()
+
+                                            // Limit snapshot height to prevent OOM errors with very long pages
+                                            val snapshotHeight = if (height > 0) Math.min(height, 8000) else webView.height
+
+                                            if (width > 0 && snapshotHeight > 0) {
+                                                val bitmap = Bitmap.createBitmap(width, snapshotHeight, Bitmap.Config.ARGB_8888)
+                                                val canvas = Canvas(bitmap)
+
+                                                // Support full-page drawing
+                                                webView.draw(canvas)
+
+                                                val cachePath = File(composeContext.cacheDir, "images")
+                                                cachePath.mkdirs()
+                                                val file = File(cachePath, "share_snapshot.png")
+                                                FileOutputStream(file).use { stream ->
+                                                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
+                                                }
+
+                                                val contentUri = FileProvider.getUriForFile(composeContext, "${composeContext.packageName}.fileprovider", file)
+
+                                                if (contentUri != null) {
+                                                    val shareIntent = Intent().apply {
+                                                        action = Intent.ACTION_SEND
+                                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                                        // Only share the image, do not include EXTRA_TEXT with the URL
+                                                        setDataAndType(contentUri, "image/png")
+                                                        putExtra(Intent.EXTRA_STREAM, contentUri)
+                                                    }
+                                                    composeContext.startActivity(Intent.createChooser(shareIntent, "Share Snapshot"))
+                                                }
+                                            } else {
+                                                Toast.makeText(composeContext, "View not ready for snapshot", Toast.LENGTH_SHORT).show()
+                                            }
+                                        } else {
+                                            // Fallback to text share if webview not found
+                                            val sendIntent = Intent().apply {
+                                                action = Intent.ACTION_SEND
+                                                putExtra(Intent.EXTRA_TEXT, webUrlState.value ?: "")
+                                                type = "text/plain"
+                                            }
+                                            composeContext.startActivity(Intent.createChooser(sendIntent, "Share via"))
                                         }
-                                        composeContext.startActivity(Intent.createChooser(genericIntent, "Share via"))
+                                    } catch (e: Exception) {
+                                        Log.e(TAG, "Sharing snapshot failed: ${e.message}")
+                                        Toast.makeText(composeContext, "Unable to share snapshot", Toast.LENGTH_SHORT).show()
                                     }
-                                } else {
-                                    Toast.makeText(composeContext, "Nothing to share", Toast.LENGTH_SHORT).show()
                                 }
                             }
                         )
@@ -537,8 +614,6 @@ class MainActivity : ComponentActivity() {
                                         // Parse and inject each cookie into the CookieManager
                                         authCookies.split("; ").forEach { cookie ->
                                             if (cookie.isNotEmpty()) {
-                                                // Map cookie to the domain/host of siteBase
-                                                val cookieDomain = try { URL(siteBase).host } catch(e: Exception) { siteBase }
                                                 cookieManager.setCookie(siteBase, cookie)
                                                 Log.d(TAG, "Injected cookie into WebView: $cookie for base: $siteBase")
                                             }
@@ -624,53 +699,6 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-
-    // Add a small helper to compute SHA-256 hex
-    private fun sha256Hex(input: String): String {
-        val md = MessageDigest.getInstance("SHA-256")
-        val digest = md.digest(input.toByteArray(Charsets.UTF_8))
-        return digest.joinToString("") { "%02x".format(it) }
-    }
-
-    // Set up the menu
-    override fun onCreateOptionsMenu(menu: Menu?): Boolean {
-        menuInflater.inflate(R.menu.main_menu, menu)
-        return true
-    }
-
-    override fun onOptionsItemSelected(item: MenuItem): Boolean {
-        return when (item.itemId) {
-            R.id.action_about -> {
-                // This is for XML menu, but we are using Compose TopAppBar.
-                // Keeping for compatibility if needed.
-                true
-            }
-            R.id.action_try -> {
-                // Launch trial flow
-                launchTrialFlow()
-                true
-            }
-            else -> super.onOptionsItemSelected(item)
-        }
-    }
-
-    private fun showAboutDialog() {
-        try {
-            val versionName = packageManager.getPackageInfo(packageName, 0).versionName
-            AlertDialog.Builder(this)
-                .setTitle(getString(R.string.app_name))
-                .setMessage("Version: $versionName")
-                .setPositiveButton("OK", null)
-                .show()
-        } catch (e: Exception) {
-            Log.e("MainActivity", "Error fetching version name: ${e.message}")
-            AlertDialog.Builder(this)
-                .setTitle("Error")
-                .setMessage("Unable to fetch app version.")
-                .setPositiveButton("OK", null)
-                .show()
-        }
-    }
 }
 
 @Composable
@@ -679,76 +707,146 @@ fun AboutAppDialog(
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
-    val versionName = try {
-        context.packageManager.getPackageInfo(context.packageName, 0).versionName
-    } catch (e: Exception) {
-        "Unknown"
+    val versionName = remember {
+        try {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        } catch (e: Exception) {
+            "Unknown"
+        }
+    }
+
+    // State to control loading and error
+    val isLoading = remember { mutableStateOf(true) }
+    val htmlContent = remember { mutableStateOf<String?>(null) }
+    val errorMessage = remember { mutableStateOf<String?>(null) }
+    val aboutUrlState = remember { mutableStateOf<String?>(null) }
+
+    // Compute About URL and fetch HTML using the centralized builder
+    LaunchedEffect(Unit) {
+        isLoading.value = true
+        errorMessage.value = null
+
+        val aboutUrl = buildAboutUrl(context)
+        aboutUrlState.value = aboutUrl
+
+        withContext(Dispatchers.IO) {
+            try {
+                val client = OkHttpClient()
+                val request = Request.Builder().url(aboutUrl).get().build()
+
+                client.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        val body = response.body?.string()
+                        if (!body.isNullOrEmpty()) {
+                            htmlContent.value = body
+                        } else {
+                            errorMessage.value = "Empty response from server"
+                        }
+                    } else {
+                        errorMessage.value = "Error ${response.code}: ${response.message}"
+                    }
+                }
+            } catch (e: Exception) {
+                errorMessage.value = "Exception: ${e.message}"
+            }
+        }
+
+        isLoading.value = false
     }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(text = "About App") },
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+        title = { Text(text = stringResource(id = R.string.about)) },
         text = {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 0.dp)
             ) {
                 // Key / Device ID at the top
-                Text(
-                    text = "Device ID / Key:",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
+                Column(modifier = Modifier.padding(horizontal = 16.dp)) {
                     Text(
-                        text = deviceId,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color.Gray,
-                        modifier = Modifier.weight(1f)
+                        text = stringResource(id = R.string.device_id_label),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary
                     )
-                    IconButton(
-                        onClick = {
-                            val clipboardManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                            val clipData = ClipData.newPlainText("deviceId", deviceId)
-                            clipboardManager.setPrimaryClip(clipData)
-                            Toast.makeText(context, "Device ID copied", Toast.LENGTH_SHORT).show()
-                        }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Share, // Reusing share as copy icon for simplicity or use a dedicated one
-                            contentDescription = "Copy ID",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(20.dp)
+                        Text(
+                            text = deviceId,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.Gray,
+                            modifier = Modifier.weight(1f)
                         )
+                        IconButton(
+                            onClick = {
+                                val clipboardManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                val clipData = ClipData.newPlainText("deviceId", deviceId)
+                                clipboardManager.setPrimaryClip(clipData)
+                                Toast.makeText(context, "Device ID copied", Toast.LENGTH_SHORT).show()
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Share,
+                                contentDescription = "Copy ID",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
                     }
+
+                    Text(text = "Version: $versionName", style = MaterialTheme.typography.bodyMedium)
+
+                    Spacer(modifier = Modifier.padding(8.dp))
+                    HorizontalDivider()
+                    Spacer(modifier = Modifier.padding(8.dp))
                 }
 
-                Text(text = "Version: $versionName", style = MaterialTheme.typography.bodyMedium)
-
-                Spacer(modifier = Modifier.padding(8.dp))
-                HorizontalDivider()
-                Spacer(modifier = Modifier.padding(8.dp))
-
-                Text(text = "🌟 App Highlights", style = MaterialTheme.typography.titleMedium)
-                Text(text = "Jamakol Prasnam: Accurate calculations for traditional Jamakol Arudha and planetary positions.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 4.dp))
-                Text(text = "Comprehensive Horoscope: Detailed Birth Charts (Jathagam) with planetary strength analysis.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 4.dp))
-                Text(text = "Numerology Insights: Name and Date of Birth analysis for personalized vibration scores.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 4.dp))
-                Text(text = "Smart Panchangam: Full daily almanac with a specialized Search tool to find auspicious times.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 4.dp))
-                Text(text = "KP Astrology: Advanced KP Lagna and Sub-lord movements for precision timing.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 4.dp))
-                Text(text = "Planetary Karakas: A deep-dive reference for Graha Karakas and their influences.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 4.dp))
-                Text(text = "Hora & Tara Balan: Real-time calculation of Hora and Tara transitions for daily planning.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 4.dp))
-                Text(text = "Tarot Integration: Intuitive Tarot card readings for quick guidance.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 4.dp))
-
-                Spacer(modifier = Modifier.padding(8.dp))
-                Text(text = "📱 Why Choose PNK Astro Jamakol?", style = MaterialTheme.typography.titleMedium)
-                Text(text = "All-in-One Hub: No need to switch between multiple apps; everything from Vedic to KP is here.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 4.dp))
-                Text(text = "User-Friendly UI: Designed for both expert astrologers and beginners.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 4.dp))
-                Text(text = "Precision Tools: High-accuracy algorithms for planetary movements and Lagnas.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 4.dp))
-                Text(text = "Tamil & English Support: Support for dual languages to reach more users.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 4.dp))
+                // Show loading indicator or error message
+                if (isLoading.value) {
+                    CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
+                } else if (errorMessage.value != null) {
+                    Text(
+                        text = "Error: ${errorMessage.value}",
+                        color = Color.Red,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(16.dp)
+                    )
+                } else if (htmlContent.value != null) {
+                    // Show the fetched HTML content in a WebView
+                    val aboutBase = aboutUrlState.value ?: ""
+                    AndroidView(
+                        factory = { ctx ->
+                            WebView(ctx).apply {
+                                settings.apply {
+                                    javaScriptEnabled = true
+                                    domStorageEnabled = true
+                                    loadWithOverviewMode = true
+                                    useWideViewPort = true
+                                    setSupportZoom(true)
+                                    builtInZoomControls = true
+                                    displayZoomControls = false
+                                }
+                                // Webview will handle its own scrolling
+                                isNestedScrollingEnabled = true
+                            }
+                        },
+                        update = { web ->
+                            try {
+                                web.loadDataWithBaseURL(aboutBase, htmlContent.value ?: "", "text/html", "utf-8", null)
+                            } catch (e: Exception) {
+                                Log.w("AboutAppDialog", "Failed to load HTML into WebView: ${e.message}")
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f, fill = false)
+                            .heightIn(min = 400.dp, max = 600.dp)
+                    )
+                }
             }
         },
         confirmButton = {
@@ -1137,7 +1235,7 @@ fun AppTopBar(
                 onDismissRequest = { showMenu.value = false }
             ) {
                 DropdownMenuItem(
-                    text = { Text(text = "Share with WhatsApp") },
+                    text = { Text(text = stringResource(id = R.string.share)) },
                     onClick = {
                         coroutineScope.launch {
                             showMenu.value = false
@@ -1148,36 +1246,12 @@ fun AppTopBar(
                 )
 
                 DropdownMenuItem(
-                    text = { Text(text = "About App") },
+                    text = { Text(text = stringResource(id = R.string.about)) },
                     onClick = {
                         coroutineScope.launch {
                             showMenu.value = false
                             kotlinx.coroutines.delay(120)
                             onAboutRequested()
-                        }
-                    }
-                )
-
-                 // Provide a dedicated, explicit action so users can open the registration dialog directly
-                DropdownMenuItem(
-                    text = { Text(text = "Register device") },
-                    onClick = {
-                        Log.d("AppTopBar", "Register device menu item clicked")
-                        coroutineScope.launch {
-                            showMenu.value = false
-                            kotlinx.coroutines.delay(120)
-                            onRegisterRequested()
-                        }
-                    }
-                )
-
-                DropdownMenuItem(
-                    text = { Text(text = stringResource(id = R.string.try_it)) },
-                    onClick = {
-                        coroutineScope.launch {
-                            showMenu.value = false
-                            kotlinx.coroutines.delay(120)
-                            onTryRequested()
                         }
                     }
                 )
@@ -1339,12 +1413,34 @@ private suspend fun buildUrlWithFreshLocation(context: Context, originalUrl: Str
                     val encodedKey = URLEncoder.encode(deviceId, StandardCharsets.UTF_8.toString())
                     return "$base&key=$encodedKey"
                 } catch (ex: Exception) {
-                    return "$base&key=$deviceId)!!"
+                    return "$base&key=$deviceId"
                 }
             }
             base
         } catch (ex: Exception) {
             originalUrl
         }
+    }
+}
+
+// Build the About URL based on SITE_URL or strings resource; keeps behavior consistent with other helpers.
+fun buildAboutUrl(context: Context): String {
+    return try {
+        val siteBase = if (try { BuildConfig.SITE_URL.isNotBlank() } catch (e: Exception) { false }) {
+            BuildConfig.SITE_URL
+        } else {
+            context.getString(R.string.site_url)
+        }
+        if (siteBase.contains("index.php")) {
+            siteBase.replace("index.php", "AboutApp.php")
+        } else if (siteBase.endsWith("/")) {
+            // Correctly append AboutApp.php when siteBase already ends with '/'
+            "${siteBase}AboutApp.php"
+        } else {
+            "$siteBase/AboutApp.php"
+        }
+    } catch (e: Exception) {
+        // Fallback to a known endpoint
+        "https://pkastro.com/AboutApp.php"
     }
 }
