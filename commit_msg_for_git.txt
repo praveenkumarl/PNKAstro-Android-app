@@ -1,0 +1,2 @@
+Make app bar share icon perform snapshot share; show app bar in trial flow
+

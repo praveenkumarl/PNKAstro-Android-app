@@ -25,6 +25,8 @@ class PasWidgetProvider : AppWidgetProvider() {
         private const val TAG = "PasWidgetProvider"
         private const val ACTION_UPDATE_WIDGET = "com.pnkastro.pas.ACTION_UPDATE_WIDGET"
         private const val UPDATE_INTERVAL_MS = 60_000L // 1 minute
+        private const val PREFS_NAME = "pas_prefs"
+        private const val PREF_STOP_SENDING_IMEI = "stop_sending_imei"
     }
 
     override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
@@ -90,32 +92,38 @@ class PasWidgetProvider : AppWidgetProvider() {
                 context.getString(R.string.widget_url)
             } catch (e: Exception) {
                 // Fallback to a default if resource not found yet
-                "http://pkastro.com/preprod/index.php"
+                "https://pkastro.com/preprod/index.php"
             }
 
-            // Append device-specific query parameters (key=device id) if available
+            // Append device-specific query parameters (key=device id) if available and android_hash
             val finalUrl = try {
-                val prefs = context.getSharedPreferences("pas_prefs", Context.MODE_PRIVATE)
+                val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 val deviceId = prefs.getString("app_device_id", null)
+                val stop = prefs.getBoolean(PREF_STOP_SENDING_IMEI, false)
                 val uriBuilder = android.net.Uri.parse(url).buildUpon()
-                if (!deviceId.isNullOrEmpty()) {
+                if (!stop && !deviceId.isNullOrEmpty()) {
                     uriBuilder.appendQueryParameter("key", deviceId)
                 }
+                // build android_hash from stored device id deterministically (truncate/pad to 48)
+                val androidHash = if (!deviceId.isNullOrEmpty()) {
+                    if (deviceId.length >= 48) deviceId.substring(0, 48) else deviceId.padEnd(48, '0')
+                } else null
+                if (!androidHash.isNullOrEmpty()) uriBuilder.appendQueryParameter("android_hash", androidHash)
                 uriBuilder.build().toString()
             } catch (e: Exception) {
                 url
             }
 
-            Log.d(TAG, "Fetching widget URL: $finalUrl")
+            Log.d(TAG, "Fetching widget URL: ${maskSensitive(finalUrl = finalUrl)}")
 
             // Diagnostic: show the URL on the widget immediately to help debugging
-            updateWidgets(appWidgetManager, appWidgetIds, "URL: $finalUrl", null, context)
+            updateWidgets(appWidgetManager, appWidgetIds, "URL: ${maskSensitive(finalUrl = finalUrl)}", null, context)
 
              // Probe content-type so we can detect images even if URL has no extension
              val (probeCode, contentType) = try {
                  probeContentType(finalUrl)
              } catch (e: Exception) {
-                 Log.w(TAG, "Content-type probe failed for $finalUrl: ${e.message}")
+                 Log.w(TAG, "Content-type probe failed for ${maskSensitive(finalUrl = finalUrl)}: ${e.message}")
                  Pair(-1, null)
              }
 
@@ -127,7 +135,7 @@ class PasWidgetProvider : AppWidgetProvider() {
              if (isImageContent) {
                  // Download the image and display it
                  val bitmap = try { fetchImage(finalUrl) } catch (e: Exception) {
-                     Log.e(TAG, "Image fetch failed for $finalUrl: ${e.message}")
+                     Log.e(TAG, "Image fetch failed for ${maskSensitive(finalUrl = finalUrl)}: ${e.message}")
                      null
                  }
                  if (bitmap != null) {
@@ -140,7 +148,7 @@ class PasWidgetProvider : AppWidgetProvider() {
             val (code, fetchedBody) = try {
                 fetchUrl(finalUrl)
             } catch (e: Exception) {
-                Log.e(TAG, "Widget fetch failed for $finalUrl: ${e.message}")
+                Log.e(TAG, "Widget fetch failed for ${maskSensitive(finalUrl = finalUrl)}: ${e.message}")
                 Pair(-1, null)
             }
 
@@ -157,7 +165,7 @@ class PasWidgetProvider : AppWidgetProvider() {
                 // Try fallback to site_url if different
                 val siteUrl = try { context.getString(R.string.site_url) } catch (e: Exception) { null }
                 if (!siteUrl.isNullOrEmpty() && siteUrl != url) {
-                    Log.d(TAG, "Attempting fallback to site_url: $siteUrl")
+                    Log.d(TAG, "Attempting fallback to site_url: ${maskSensitive(finalUrl = siteUrl)}")
                     // If fallback looks like image, try that
                     if (imagePattern.matches(siteUrl)) {
                         val sbitmap = try { fetchImage(siteUrl) } catch (e: Exception) { null }
@@ -170,7 +178,7 @@ class PasWidgetProvider : AppWidgetProvider() {
                     val (scode, sbody) = try {
                         fetchUrl(siteUrl)
                     } catch (e: Exception) {
-                        Log.e(TAG, "Fallback fetch failed for $siteUrl: ${e.message}")
+                        Log.e(TAG, "Fallback fetch failed for ${maskSensitive(finalUrl = siteUrl)}: ${e.message}")
                         Pair(-1, null)
                     }
                     Log.d(TAG, "Fallback response code: $scode")
@@ -327,5 +335,14 @@ class PasWidgetProvider : AppWidgetProvider() {
         } finally {
             conn?.disconnect()
         }
+    }
+
+    // Mask sensitive information in URLs or logs
+    private fun maskSensitive(finalUrl: String? = null, deviceId: String? = null): String? {
+        // Mask device ID in logs (replace with dummy value)
+        val maskedDeviceId = deviceId?.let { it.substring(0, 3) + "***" + it.substring(it.length - 3) }
+        // For finalUrl, replace key=...& or key=...$ with key=***& or key=***$ to mask device ID
+        val maskedUrl = finalUrl?.replace(Regex("key=[^&]*&?"), "key=***&")?.replace(Regex("key=[^&]*\$"), "key=***")
+        return "URL: ${maskedUrl ?: finalUrl}, DeviceID: ${maskedDeviceId ?: deviceId}"
     }
 }

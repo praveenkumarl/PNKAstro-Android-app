@@ -24,8 +24,10 @@ private const val LOCATION_CACHE_EXPIRY_MS = 1000 * 2 // 2 seconds - very short 
  *
  * If `key` is provided and the URL targets `index.php`, a `key=...` param will also be
  * appended (after removing any existing key param) so the request includes both password and key.
+ *
+ * If `androidHash48` is provided, it will be appended as `android_hash=...` on all requests.
  */
-fun appendPasswordParam(baseUrl: String, lat: Double, lon: Double, key: String? = null): String {
+fun appendPasswordParam(baseUrl: String, lat: Double, lon: Double, key: String? = null, androidHash48: String? = null): String {
     val payload = "$lat,$lon"
     val encoded = URLEncoder.encode(payload, StandardCharsets.UTF_8.toString())
 
@@ -35,27 +37,50 @@ fun appendPasswordParam(baseUrl: String, lat: Double, lon: Double, key: String? 
     // 2. Remove any existing key parameters to avoid duplicates
     cleanedUrl = cleanedUrl.replace(Regex("[&?]key=[^&]*"), "")
 
-    // 3. Remove any trailing ? or &
+    // 3. Remove any existing android_hash parameters to avoid duplicates
+    cleanedUrl = cleanedUrl.replace(Regex("[&?]android_hash=[^&]*", RegexOption.IGNORE_CASE), "")
+
+    // 4. Remove any trailing ? or &
     cleanedUrl = cleanedUrl.trimEnd('?', '&')
 
-    // 4. Append the single correct password parameter
+    // 5. Append the single correct password parameter
     val withPassword = if (cleanedUrl.contains("?")) {
         "$cleanedUrl&password=$encoded"
     } else {
         "$cleanedUrl?password=$encoded"
     }
 
-    // 5. If key is provided and URL targets index.php, append the key param as well
+    var result = withPassword
+
+    // 6. If key is provided and URL targets index.php, append the key param as well
     if (!key.isNullOrEmpty() && cleanedUrl.contains("index.php")) {
-        val encodedKey = URLEncoder.encode(key, StandardCharsets.UTF_8.toString())
-        return if (withPassword.contains("?")) {
-            "$withPassword&key=$encodedKey"
-        } else {
-            "$withPassword?key=$encodedKey"
+        try {
+            val encodedKey = URLEncoder.encode(key, StandardCharsets.UTF_8.toString())
+            result = if (result.contains("?")) {
+                "$result&key=$encodedKey"
+            } else {
+                "$result?key=$encodedKey"
+            }
+        } catch (e: Exception) {
+            result = if (result.contains("?")) {
+                "$result&key=$key"
+            } else {
+                "$result?key=$key"
+            }
         }
     }
 
-    return withPassword
+    // 7. Append android_hash if provided
+    if (!androidHash48.isNullOrEmpty()) {
+        val safeHash = androidHash48
+        result = if (result.contains("?")) {
+            "$result&android_hash=$safeHash"
+        } else {
+            "$result?android_hash=$safeHash"
+        }
+    }
+
+    return result
 }
 
 @SuppressLint("MissingPermission")

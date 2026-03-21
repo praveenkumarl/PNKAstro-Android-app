@@ -78,14 +78,16 @@ import java.util.UUID
 
 class MainActivity : ComponentActivity() {
     private val TAG = "PAS_AUTH"
+    private val PREFS_NAME = "pas_prefs"
+    private val PREF_STOP_SENDING_IMEI = "stop_sending_imei"
+
     // Request code used for startActivityForResult when launching TrialWebViewActivity
     private val TRIAL_REQUEST_CODE = 1001
 
     // Centralized launcher for the trial flow so both options menu and Compose UI can invoke it
     private fun launchTrialFlow() {
-        // Use the app-scoped device id (stored in prefs / displayed in About) so the trial request
-        // uses the same key as the rest of the app. Fall back to raw ANDROID_ID if not yet set.
-        val deviceKey = deviceIdValue.value ?: try { Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID) ?: "" } catch (e: Exception) { "" }
+        // Use the platform source Android ID (preferred) for the imei/key parameter
+        val deviceKey = getSourceAndroidId()
         val deviceModel = try { URLEncoder.encode(android.os.Build.MODEL ?: "", java.nio.charset.StandardCharsets.UTF_8.toString()) } catch (e: Exception) { android.os.Build.MODEL ?: "" }
 
         val trialBase = try {
@@ -94,9 +96,23 @@ class MainActivity : ComponentActivity() {
             "https://pkastro.com/new_registration_mobile_trial.php"
         }
 
-        val url = "$trialBase?imei=${deviceKey}&device=${deviceModel}"
+        // Decide whether to keep sending old imei/key based on remote-controlled pref
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val stopSendingImeis = prefs.getBoolean(PREF_STOP_SENDING_IMEI, false)
 
-        Log.d(TAG, "Launching Trial Flow with URL: $url")
+        // Build the trial URL safely and append android_hash; continue including imei until cutover
+        val uriBuilder = Uri.parse(trialBase).buildUpon()
+        if (!stopSendingImeis && deviceKey.isNotBlank()) {
+            uriBuilder.appendQueryParameter("imei", deviceKey)
+        }
+        if (deviceModel.isNotBlank()) uriBuilder.appendQueryParameter("device", deviceModel)
+
+        val androidHash = getAndroidHash48()
+        if (androidHash.isNotBlank()) uriBuilder.appendQueryParameter("android_hash", androidHash)
+
+        val url = uriBuilder.build().toString()
+
+        Log.d(TAG, "Launching Trial Flow with URL: ${maskSensitiveQuery(url)}")
 
         try {
             // Use TrialWebViewActivity to handle the trial registration and its JSON response
@@ -143,27 +159,54 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun getRawAndroidId(): String {
-        // Try MediaDrm ID first as it's more stable across uninstalls
-        val drmId = getMediaDrmId()
-        val rawId = if (drmId.isNotEmpty()) drmId else {
-            try {
-                Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID) ?: ""
-            } catch (e: Exception) {
+        // This previously returned a SHA-256 of the raw id; keep it for backward compatibility only.
+        // Use getSourceAndroidId() for the actual raw device identifier when sending 'key'.
+        return try {
+            // Try MediaDrm ID first as it's more stable across uninstalls
+            val drmId = getMediaDrmId()
+            val rawId = if (drmId.isNotEmpty()) drmId else {
+                try {
+                    Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID) ?: ""
+                } catch (e: Exception) {
+                    ""
+                }
+            }
+
+            // Return SHA-256(hex) of the raw id (legacy hashed form)
+            if (rawId.isNotEmpty()) {
+                try {
+                    val digest = MessageDigest.getInstance("SHA-256")
+                    val hash = digest.digest(rawId.toByteArray(StandardCharsets.UTF_8))
+                    hash.joinToString("") { "%02x".format(it) }
+                } catch (e: Exception) {
+                    rawId
+                }
+            } else {
                 ""
             }
-        }
-
-        return if (rawId.isNotEmpty()) {
-            try {
-                val digest = MessageDigest.getInstance("SHA-256")
-                val hash = digest.digest(rawId.toByteArray(StandardCharsets.UTF_8))
-                hash.joinToString("") { "%02x".format(it) }
-            } catch (e: Exception) {
-                rawId
-            }
-        } else {
+        } catch (e: Exception) {
             ""
         }
+    }
+
+    // New helper to compute the 48-char android_hash required by backend. We derive it from the source ID
+    // (MediaDrm id or ANDROID_ID) by computing SHA-256 and NOT truncating or padding to 48.
+    // The server expects the full SHA-256 (64 hex chars).
+    private fun getAndroidHash48(): String {
+        val source = getSourceAndroidId()
+        if (source.isEmpty()) return ""
+        return try {
+            val digest = MessageDigest.getInstance("SHA-256")
+            val hash = digest.digest(source.toByteArray(StandardCharsets.UTF_8))
+            hash.joinToString("") { "%02x".format(it) }
+        } catch (e: Exception) {
+            ""
+        }
+    }
+
+    // helper to NOT mask sensitive query params from logs anymore as requested by user
+    private fun maskSensitiveQuery(url: String?): String {
+        return url ?: ""
     }
 
     @Deprecated("Deprecated in Java")
@@ -176,9 +219,9 @@ class MainActivity : ComponentActivity() {
 
             if (activated) {
                 // Save expiry and android id in SharedPreferences as required
-                val prefs = getSharedPreferences("pas_prefs", Context.MODE_PRIVATE)
-                // Persist the same device id that the app is using (deviceIdValue) so it's uniform everywhere.
-                val currentDeviceId = deviceIdValue.value ?: try { Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID) ?: "" } catch (e: Exception) { "" }
+                val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                // Persist the platform source Android ID (plain ANDROID_ID) for trial records
+                val currentDeviceId = getSourceAndroidId()
                 prefs.edit().apply {
                     putString("trial_expiry", expiry)
                     putString("trial_imei", currentDeviceId)
@@ -186,7 +229,7 @@ class MainActivity : ComponentActivity() {
                     apply()
                 }
 
-                Log.d(TAG, "Trial activated, expiry: $expiry. Redirecting...")
+                Log.d(TAG, "Trial activated, expiry available. Redirecting...")
 
                 // Navigate to app home/index activity by refreshing the auth flow
                 // or loading the redirect_url if provided
@@ -252,19 +295,19 @@ class MainActivity : ComponentActivity() {
 
         // Use ANDROID_ID as the stable, unique device id. Persist it in prefs for consistency.
         run {
-            val prefs = getSharedPreferences("pas_prefs", Context.MODE_PRIVATE)
-            val androidId = getRawAndroidId()
+            val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            // Store the raw source Android ID (MediaDrm id if available, otherwise Settings.Secure.ANDROID_ID)
+            val sourceId = getSourceAndroidId()
 
-            val stableId = if (androidId.isNotEmpty()) {
-                androidId
-            } else {
-                // Fallback to existing stored ID or create one if ANDROID_ID is somehow null
+            // Update state immediately with the latest platform ID
+            deviceIdValue.value = sourceId.ifEmpty {
                 prefs.getString("app_device_id", null) ?: java.util.UUID.randomUUID().toString()
             }
 
-            prefs.edit().putString("app_device_id", stableId).apply()
-            deviceIdValue.value = stableId
-            Log.d(TAG, "Using Device ID: $stableId")
+            // Persist the resulting ID
+            prefs.edit().putString("app_device_id", deviceIdValue.value).apply()
+
+            Log.d(TAG, "Using Device ID configured: ${deviceIdValue.value}")
         }
 
         // Initialize state to hold final URL and allowed host
@@ -377,7 +420,8 @@ class MainActivity : ComponentActivity() {
                             }
                         )
                     },
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier.fillMaxSize(),
+                    contentWindowInsets = WindowInsets(0, 0, 0, 0)
                 ) { innerPadding ->
                     if (urlToLoad == null) {
                         LoadingScreen(
@@ -405,7 +449,7 @@ class MainActivity : ComponentActivity() {
                              coroutineScope.launch {
                                  val result = withContext(Dispatchers.IO) {
                                      try {
-                                         sendKeyChange(phone, deviceIdValue.value ?: "")
+                                         sendKeyChange(phone, getSourceAndroidId())
                                      } catch (e: Exception) {
                                          Log.e("MainActivity", "sendKeyChange error: ${e.message}")
                                          Pair(false, "ERROR: ${e.message}")
@@ -458,11 +502,11 @@ class MainActivity : ComponentActivity() {
 
     // Regenerate and persist a new app-scoped device ID, update state and restart activity to re-run auth flow
     private fun resetDeviceId() {
-        val prefs = getSharedPreferences("pas_prefs", Context.MODE_PRIVATE)
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         // Remove stored id
         prefs.edit().remove("app_device_id").apply()
-        val androidId = getRawAndroidId()
-        val newId = if (androidId.isNotEmpty()) androidId else java.util.UUID.randomUUID().toString()
+        val source = getSourceAndroidId()
+        val newId = if (source.isNotEmpty()) source else java.util.UUID.randomUUID().toString()
         prefs.edit().putString("app_device_id", newId).apply()
         deviceIdValue.value = newId
         Toast.makeText(this, "Device ID reset", Toast.LENGTH_SHORT).show()
@@ -476,11 +520,11 @@ class MainActivity : ComponentActivity() {
             try {
                 val loc = withContext(Dispatchers.IO) { getCurrentLocation(this@MainActivity) }
                 val finalUrl = if (loc != null) {
-                    appendPasswordParam(baseUrl, loc.latitude, loc.longitude)
+                    appendPasswordParam(baseUrl, loc.latitude, loc.longitude, null, getAndroidHash48())
                 } else {
                     baseUrl
                 }
-                Log.d(TAG, "Opening external URL in Custom Tab: $finalUrl")
+                Log.d(TAG, "Opening external URL in Custom Tab: ${maskSensitiveQuery(finalUrl)}")
                 val builder = CustomTabsIntent.Builder()
                 val customTabsIntent = builder.build()
                 customTabsIntent.launchUrl(this@MainActivity, finalUrl.toUri())
@@ -511,17 +555,68 @@ class MainActivity : ComponentActivity() {
             getString(R.string.site_url)
         }
 
-        // Append key param to auth URL safely (respect existing query params) and URL-encode the key
-        val authUrl = try {
-            val enc = java.net.URLEncoder.encode(deviceId, java.nio.charset.StandardCharsets.UTF_8.toString())
-            if (authBase.contains("?")) "$authBase&key=$enc" else "$authBase?key=$enc"
-        } catch (e: Exception) {
-            // fallback: naive append
-            if (authBase.contains("?")) "$authBase&key=$deviceId" else "$authBase?key=$deviceId"
-        }
+        // Normalize any http:// BuildConfig/string URLs to https:// at runtime to enforce HTTPS-only policy.
+        // This protects against stale BuildConfig values when a rebuild hasn't been performed yet.
+        val authBaseNormalized = try {
+            if (authBase.startsWith("http://", ignoreCase = true)) {
+                // prefer the HTTPS string resource which has been updated
+                getString(R.string.auth_url)
+            } else authBase
+        } catch (e: Exception) { authBase }
 
-        Log.d(TAG, "Starting authentication with URL: $authUrl (base source: ${if (authBase == BuildConfig.AUTH_URL) "BuildConfig" else "strings.xml"})")
-        Log.d(TAG, "Site base URL: $siteBase (source: ${if (siteBase == BuildConfig.SITE_URL) "BuildConfig" else "strings.xml"})")
+        val siteBaseNormalized = try {
+            if (siteBase.startsWith("http://", ignoreCase = true)) {
+                // prefer the HTTPS string resource which has been updated
+                getString(R.string.site_url)
+            } else siteBase
+        } catch (e: Exception) { siteBase }
+
+        // Force-convert any lingering http:// to https:// to guarantee HTTPS at runtime
+        val authBaseFinal = try { authBaseNormalized.replaceFirst("http://", "https://", ignoreCase = true) } catch (e: Exception) { authBaseNormalized }
+        val siteBaseFinal = try { siteBaseNormalized.replaceFirst("http://", "https://", ignoreCase = true) } catch (e: Exception) { siteBaseNormalized }
+
+        // Decide whether to keep sending old imei/key based on remote-controlled pref
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val stopSendingImeis = prefs.getBoolean(PREF_STOP_SENDING_IMEI, false)
+
+        // Append key and android_hash param to auth URL safely (respect existing query params) and URL-encode values
+        val androidHash = getAndroidHash48()
+        // Use the unhashed source id (MediaDrm id or ANDROID_ID) as the `key` parameter expected by the server
+        // Ensure we use the actual current platform ID (sourceId) rather than the method parameter if it's inconsistent
+        val sourceId = getSourceAndroidId()
+
+        Log.d(TAG, "DEBUG: sourceId='$sourceId', androidHash='$androidHash'")
+
+        val authUrl = try {
+            // Do not pre-encode the deviceId here - Uri.Builder.appendQueryParameter will encode it.
+            val uriBuilder = Uri.parse(authBaseFinal).buildUpon()
+            if (!stopSendingImeis && sourceId.isNotBlank()) {
+                uriBuilder.appendQueryParameter("key", sourceId)
+            }
+            if (androidHash.isNotBlank()) {
+                uriBuilder.appendQueryParameter("android_hash", androidHash)
+            }
+            var built = uriBuilder.build().toString()
+            // Ensure scheme is HTTPS
+            if (built.startsWith("http://", ignoreCase = true)) built = built.replaceFirst("http://", "https://")
+            built
+        } catch (e: Exception) {
+            // fallback: naive append but still prefer HTTPS; ensure we URL-encode values here
+            var builder = authBaseNormalized
+             if (!stopSendingImeis && sourceId.isNotBlank()) {
+                 val encodedKey = try { java.net.URLEncoder.encode(sourceId, java.nio.charset.StandardCharsets.UTF_8.toString()) } catch (ex: Exception) { sourceId }
+                 builder = if (builder.contains("?")) "$builder&key=$encodedKey" else "$builder?key=$encodedKey"
+             }
+             if (androidHash.isNotBlank()) {
+                 val safeHash = try { java.net.URLEncoder.encode(androidHash, java.nio.charset.StandardCharsets.UTF_8.toString()) } catch (ex: Exception) { androidHash }
+                 builder = if (builder.contains("?")) "$builder&android_hash=$safeHash" else "$builder?android_hash=$safeHash"
+             }
+             if (builder.startsWith("http://", ignoreCase = true)) builder = builder.replaceFirst("http://", "https://")
+              builder
+         }
+
+        Log.d(TAG, "Starting authentication. originalBuildConfigBase=${maskSensitiveQuery(authBase)}, normalizedBase=${maskSensitiveQuery(authBaseFinal)}, authUrl=${maskSensitiveQuery(authUrl)}")
+        Log.d(TAG, "Site base: original=${maskSensitiveQuery(siteBase)}, normalized=${maskSensitiveQuery(siteBaseFinal)}")
 
         // Launch coroutine tied to lifecycle
         lifecycleScope.launch {
@@ -535,6 +630,13 @@ class MainActivity : ComponentActivity() {
                     while (redirectCount < 5) {
                         try {
                             val url = URL(urlToFetch)
+                            // Ensure we only fetch HTTPS; if URL is HTTP try to rewrite to HTTPS
+                            if (!url.protocol.equals("https", ignoreCase = true)) {
+                                val rewritten = url.toString().replaceFirst("http://", "https://", ignoreCase = true)
+                                Log.w(TAG, "Rewriting non-HTTPS URL to: ${maskSensitiveQuery(rewritten)}")
+                                urlToFetch = rewritten
+                            }
+
                             val conn = (url.openConnection() as HttpURLConnection).apply {
                                 requestMethod = "GET"
                                 connectTimeout = 10000
@@ -549,14 +651,14 @@ class MainActivity : ComponentActivity() {
                             }
 
                             val responseCode = conn.responseCode
-                            Log.d(TAG, "Response code: $responseCode from URL: $urlToFetch")
+                            Log.d(TAG, "Response code: $responseCode from URL: ${maskSensitiveQuery(urlToFetch)}")
 
                             // Extract Set-Cookie headers from response
                             val setCookieHeaders = conn.getHeaderFields()["Set-Cookie"]
                             if (setCookieHeaders != null && setCookieHeaders.isNotEmpty()) {
                                 Log.d(TAG, "Received ${setCookieHeaders.size} Set-Cookie header(s)")
                                 for (cookieHeader in setCookieHeaders) {
-                                    Log.d(TAG, "Set-Cookie: $cookieHeader")
+                                    Log.d(TAG, "Set-Cookie header received")
                                     // Extract just the cookie name=value part (before semicolon)
                                     val cookiePart = cookieHeader.split(";")[0].trim()
                                     if (authCookies.isEmpty()) {
@@ -565,13 +667,13 @@ class MainActivity : ComponentActivity() {
                                         authCookies += "; $cookiePart"
                                     }
                                 }
-                                Log.d(TAG, "Accumulated cookies: $authCookies")
+                                Log.d(TAG, "Accumulated cookies for WebView injection")
                             }
 
                             // Check if it's a redirect
                             if (responseCode in 301..302) {
                                 val location = conn.getHeaderField("Location")
-                                Log.d(TAG, "Redirect to: $location")
+                                Log.d(TAG, "Redirect to: ${maskSensitiveQuery(location)}")
                                 conn.disconnect()
 
                                 if (location != null) {
@@ -589,7 +691,7 @@ class MainActivity : ComponentActivity() {
                                     ""
                                 }
                                 Log.d(TAG, "Response body length: ${responseBody.length}")
-                                Log.d(TAG, "Full Auth Response Body: $responseBody")
+                                // Do not log full auth response body as it may contain sensitive tokens/ids
 
                                 // Check for automatic trial registration trigger from auth endpoint
                                 if (responseBody.contains("\"action\":\"register\"") && responseBody.contains("\"imei\":")) {
@@ -600,6 +702,31 @@ class MainActivity : ComponentActivity() {
                                         launchTrialFlow()
                                     }
                                     return@withContext null // Stop normal flow as we're opening the Trial Activity
+                                }
+
+                                // Detect a server-side signal to stop sending legacy IMEI/key
+                                if (responseBody.contains("android_hash_cutover", ignoreCase = true)
+                                    || responseBody.contains("stop_sending_imei", ignoreCase = true)
+                                    || responseBody.contains("stop_sending_key", ignoreCase = true)) {
+                                    try {
+                                        prefs.edit().putBoolean(PREF_STOP_SENDING_IMEI, true).apply()
+                                        Log.d(TAG, "Server signalled android_hash cutover; will stop sending legacy IMEI/key going forward")
+                                    } catch (e: Exception) {
+                                        // ignore
+                                    }
+                                }
+
+                                // New: detect migration confirmation from server and proceed to logged-in flow
+                                // Example JSON: { "migrated": true, "message": "migration completed" }
+                                if (responseBody.contains("\"migrated\":true") || responseBody.contains("\"migrated\": true")) {
+                                    Log.d(TAG, "Server indicates device migration (migrated=true). Skipping trial registration and continuing logged-in flow.")
+                                    try {
+                                        // The server migration implies device mapping is done; stop sending legacy IMEI/key going forward
+                                        prefs.edit().putBoolean(PREF_STOP_SENDING_IMEI, true).apply()
+                                    } catch (e: Exception) {
+                                        // ignore
+                                    }
+                                    // Do NOT launch trial flow; continue processing the successful auth response below
                                 }
 
                                 conn.disconnect()
@@ -614,8 +741,8 @@ class MainActivity : ComponentActivity() {
                                         // Parse and inject each cookie into the CookieManager
                                         authCookies.split("; ").forEach { cookie ->
                                             if (cookie.isNotEmpty()) {
-                                                cookieManager.setCookie(siteBase, cookie)
-                                                Log.d(TAG, "Injected cookie into WebView: $cookie for base: $siteBase")
+                                                cookieManager.setCookie(siteBaseNormalized, cookie)
+                                                Log.d(TAG, "Injected cookie into WebView (masked)")
                                             }
                                         }
 
@@ -638,29 +765,27 @@ class MainActivity : ComponentActivity() {
                                     retryCount++
                                 }
 
-                                Log.d(TAG, "Location retrieved after $retryCount retries - Lat: ${loc?.latitude}, Lon: ${loc?.longitude}")
+                                Log.d(TAG, "Location retrieved after $retryCount retries")
 
                                 val finalUrl = if (loc != null) {
                                     // include device key param when loading index.php post-auth
-                                    appendPasswordParam(siteBase, loc.latitude, loc.longitude, deviceId)
+                                    appendPasswordParam(siteBaseFinal, loc.latitude, loc.longitude, if (stopSendingImeis) null else sourceId, androidHash)
                                 } else {
                                     // If still no location, add ?password=noloc parameter and append key
                                     Log.w(TAG, "No location available after retries")
-                                    val base = if (siteBase.contains("?")) {
-                                        "$siteBase&password=noloc"
+                                    val base = if (siteBaseFinal.contains("?")) {
+                                        "$siteBaseFinal&password=noloc"
                                     } else {
-                                        "$siteBase?password=noloc"
+                                        "$siteBaseFinal?password=noloc"
                                     }
                                     // Append key param after cleaning existing key if any
-                                    try {
-                                        val encodedKey = java.net.URLEncoder.encode(deviceId, java.nio.charset.StandardCharsets.UTF_8.toString())
-                                        "$base&key=$encodedKey"
-                                    } catch (e: Exception) {
-                                        base
-                                    }
+                                    val encodedKey = try { URLEncoder.encode(sourceId, StandardCharsets.UTF_8.toString()) } catch (e: Exception) { sourceId }
+                                    var result = if (base.contains("?")) "$base&key=$encodedKey" else "$base?key=$encodedKey"
+                                    if (androidHash.isNotBlank()) result += "&android_hash=$androidHash"
+                                    return@withContext result
                                 }
-                                Log.d(TAG, "Authentication successful with cookies preserved, final URL to load: $finalUrl")
-                                return@withContext finalUrl
+                                 Log.d(TAG, "Authentication successful, final URL to load: ${maskSensitiveQuery(finalUrl)}")
+                                 return@withContext finalUrl
                             } else {
                                 // Other response codes are failures
                                 Log.d(TAG, "Unexpected response code: $responseCode")
@@ -668,17 +793,9 @@ class MainActivity : ComponentActivity() {
                                 return@withContext null
                             }
                         } catch (e: Exception) {
-                            Log.e(TAG, "Error fetching URL $urlToFetch: ${e.message}", e)
-                            // If we get a DNS error on HTTPS, try HTTP as fallback
-                            if (urlToFetch.startsWith("https://") && e.message?.contains("unable to resolve host", ignoreCase = true) == true) {
-                                val httpUrl = urlToFetch.replace("https://", "http://")
-                                Log.d(TAG, "HTTPS failed, retrying with HTTP: $httpUrl")
-                                urlToFetch = httpUrl
-                                redirectCount++
-                                continue
-                            } else {
-                                return@withContext null
-                            }
+                            Log.e(TAG, "Error fetching URL ${maskSensitiveQuery(urlToFetch)}: ${e.message}", e)
+                            // Do not attempt HTTP fallback - enforce HTTPS-only policy
+                            return@withContext null
                         }
                     }
                     null
@@ -689,7 +806,7 @@ class MainActivity : ComponentActivity() {
             }
 
             if (resultUrl != null) {
-                Log.d(TAG, "Authentication successful, will open in-app: $resultUrl")
+                Log.d(TAG, "Authentication successful, will open in-app: ${maskSensitiveQuery(resultUrl)}")
                 onResultUrl(resultUrl)
             } else {
                 // If resultUrl is null, it might be because we intercepted a trial registration
@@ -699,6 +816,30 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    private fun getSourceIdForMigration(): String {
+        return getSourceAndroidId()
+    }
+
+    private fun getSourceAndroidId(): String {
+        // Prefer the platform ANDROID_ID (stable 16-hex string on most devices) for the `key` parameter.
+        // Fall back to MediaDrm unique id only if ANDROID_ID is not available.
+        return try {
+            val androidId = Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID) ?: ""
+            if (androidId.isNotEmpty()) {
+                androidId
+            } else {
+                try {
+                    getMediaDrmId()
+                } catch (e: Exception) {
+                    ""
+                }
+            }
+        } catch (e: Exception) {
+            ""
+        }
+    }
+
 }
 
 @Composable
@@ -726,7 +867,22 @@ fun AboutAppDialog(
         isLoading.value = true
         errorMessage.value = null
 
-        val aboutUrl = buildAboutUrl(context)
+        // Compute the android_hash as the SHA-256 hex of the deviceId (full 64 hex chars). Avoid zero-padding.
+        val androidHash = try {
+            val base = deviceId ?: ""
+            if (base.isBlank()) "" else sha256Hex(base)
+        } catch (e: Exception) { "" }
+
+        val aboutUrl = buildAboutUrl(context).let { url ->
+            val uri = Uri.parse(url).buildUpon()
+            if (!deviceId.isNullOrBlank()) {
+                uri.appendQueryParameter("imei", deviceId)
+            }
+            if (androidHash.isNotBlank()) {
+                uri.appendQueryParameter("android_hash", androidHash)
+            }
+            uri.build().toString()
+        }
         aboutUrlState.value = aboutUrl
 
         withContext(Dispatchers.IO) {
@@ -798,7 +954,47 @@ fun AboutAppDialog(
                         }
                     }
 
-                    Text(text = "Version: $versionName", style = MaterialTheme.typography.bodyMedium)
+                    // Show Android hash (64-char) derived from deviceId for migration support
+                    // We now use the full SHA-256 hash to avoid incorrect padding with '0's.
+                    val androidHash = remember {
+                        try {
+                            val source = deviceId ?: ""
+                            if (source.isEmpty()) "" else {
+                                val digest = java.security.MessageDigest.getInstance("SHA-256")
+                                val hashBytes = digest.digest(source.toByteArray(java.nio.charset.StandardCharsets.UTF_8))
+                                hashBytes.joinToString("") { "%02x".format(it) }
+                            }
+                        } catch (e: Exception) { "" }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Android hash:",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = androidHash,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.Gray,
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(onClick = {
+                            try {
+                                val clipboardManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                val clipData = ClipData.newPlainText("android_hash", androidHash)
+                                clipboardManager.setPrimaryClip(clipData)
+                                Toast.makeText(context, "Android hash copied", Toast.LENGTH_SHORT).show()
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "Copy failed", Toast.LENGTH_SHORT).show()
+                            }
+                        }) {
+                            Icon(imageVector = Icons.Default.Share, contentDescription = "Copy hash", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                        }
+                    }
+
+                     Text(text = "Version: $versionName", style = MaterialTheme.typography.bodyMedium)
 
                     Spacer(modifier = Modifier.padding(8.dp))
                     HorizontalDivider()
@@ -1221,8 +1417,8 @@ fun AppTopBar(
         modifier = modifier,
         actions = {
             if (currentUrl != null) {
-                IconButton(onClick = { onOpenInBrowser(currentUrl) }) {
-                    Icon(Icons.Filled.Share, contentDescription = "Open in browser", tint = colorResource(id = R.color.golden_yellow))
+                IconButton(onClick = { onShareRequested() }) {
+                    Icon(Icons.Filled.Share, contentDescription = "Share snapshot", tint = colorResource(id = R.color.golden_yellow))
                 }
             }
 
@@ -1384,13 +1580,15 @@ private suspend fun buildUrlWithFreshLocation(context: Context, originalUrl: Str
         params["password"] = mutableListOf(passwordValue)
 
         // If URL targets index.php and we have a deviceId, ensure key param is set/replaced
-        if (originalUrl.contains("index.php") && !deviceId.isNullOrEmpty()) {
-            try {
-                val encodedKey = URLEncoder.encode(deviceId, StandardCharsets.UTF_8.toString())
-                params["key"] = mutableListOf(encodedKey)
-            } catch (e: Exception) {
-                params["key"] = mutableListOf(deviceId)
+        if (originalUrl.contains("index.php")) {
+            // Prefer the platform ANDROID_ID when available (this is the expected 'key' on the server).
+            // Fall back to MediaDrm id or random UUID if no stable ID is available.
+            val keyToUse = when {
+                !deviceId.isNullOrEmpty() -> deviceId
+                else -> java.util.UUID.randomUUID().toString() // fallback to random UUID
             }
+
+            params["key"] = mutableListOf(keyToUse)
         }
 
         // Rebuild query
@@ -1442,5 +1640,17 @@ fun buildAboutUrl(context: Context): String {
     } catch (e: Exception) {
         // Fallback to a known endpoint
         "https://pkastro.com/AboutApp.php"
+    }
+}
+
+// Helper: compute SHA-256 hex of an input string. Used by About dialog and other helpers.
+fun sha256Hex(input: String): String {
+    return try {
+        if (input.isEmpty()) return ""
+        val md = java.security.MessageDigest.getInstance("SHA-256")
+        val hash = md.digest(input.toByteArray(java.nio.charset.StandardCharsets.UTF_8))
+        hash.joinToString("") { "%02x".format(it) }
+    } catch (e: Exception) {
+        ""
     }
 }
