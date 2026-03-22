@@ -11,7 +11,7 @@
         android:layout_height="match_parent"
         android:contentDescription="@string/splash_logo_desc"
         android:scaleType="centerCrop"
-        android:src="@drawable/brand_logo"
+        android:src="@drawable/splash_image"
         android:layout_gravity="center" />
 
 </FrameLayout>

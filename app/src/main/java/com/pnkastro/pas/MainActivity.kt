@@ -8,11 +8,8 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.webkit.*
 import android.net.Uri
-import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
-import android.view.Menu
-import android.view.MenuItem
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -23,8 +20,6 @@ import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Share
@@ -47,6 +42,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
@@ -213,6 +209,24 @@ class MainActivity : ComponentActivity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == TRIAL_REQUEST_CODE && resultCode == Activity.RESULT_OK) {
+            // First, handle check_phone / migration_available responses forwarded by TrialWebViewActivity
+            val migrationAvailable = data?.getBooleanExtra("migration_available", false) ?: false
+            if (migrationAvailable) {
+                Log.d(TAG, "onActivityResult: migration_available=true, extras=${data?.extras}")
+                val migrationType = data?.getStringExtra("migration_type") ?: ""
+                val currentImei = data?.getStringExtra("current_imei") ?: ""
+                val expiry = data?.getStringExtra("expiry") ?: ""
+                val message = data?.getStringExtra("message") ?: when (migrationType) {
+                    "subscription" -> "Active subscription found, expires: $expiry"
+                    "account" -> if (currentImei.isNotBlank()) "Account found for IMEI: $currentImei" else "Account found"
+                    else -> "Migration available"
+                }
+
+                // Give a clear, correct UI message and return early. Let the rest of the app open migration UI if needed.
+                Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+                return
+            }
+
             val activated = data?.getBooleanExtra("activated", false) ?: false
             val expiry = data?.getStringExtra("expiry") ?: ""
             val redirectUrl = data?.getStringExtra("redirect_url")
@@ -910,145 +924,130 @@ fun AboutAppDialog(
         isLoading.value = false
     }
 
-    AlertDialog(
+    // Replace AlertDialog with a custom Dialog to avoid any platform or composable chrome/borders
+    Dialog(
         onDismissRequest = onDismiss,
-        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
-        title = { Text(text = stringResource(id = R.string.about)) },
-        text = {
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        // Root container that fills available width but wraps content height so the dialog artwork is fully visible
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .wrapContentHeight()
+        ) {
+            // Background image (cosmic_bg_menu) full-bleed
+            Image(
+                painter = painterResource(id = R.drawable.cosmic_bg_menu),
+                contentDescription = null,
+                modifier = Modifier
+                    .matchParentSize(),
+                contentScale = ContentScale.Crop
+            )
+
+            // Semi-transparent scrim for readability
+            Box(modifier = Modifier
+                .matchParentSize()
+                .background(Color(0xAA000000)))
+
+            // Foreground content with a little padding; this sits on top of the image with no dialog border
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 0.dp)
+                    .padding(16.dp)
             ) {
-                // Key / Device ID at the top
-                Column(modifier = Modifier.padding(horizontal = 16.dp)) {
-                    Text(
-                        text = stringResource(id = R.string.device_id_label),
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            text = deviceId,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color.Gray,
-                            modifier = Modifier.weight(1f)
-                        )
-                        IconButton(
-                            onClick = {
-                                val clipboardManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                val clipData = ClipData.newPlainText("deviceId", deviceId)
-                                clipboardManager.setPrimaryClip(clipData)
-                                Toast.makeText(context, "Device ID copied", Toast.LENGTH_SHORT).show()
-                            }
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Share,
-                                contentDescription = "Copy ID",
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
+                // Device id + copy
+                Text(
+                    text = stringResource(id = R.string.device_id_label),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary
+                )
+
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Text(text = deviceId, color = Color.LightGray, modifier = Modifier.weight(1f))
+                    IconButton(onClick = {
+                        val clipboardManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        val clipData = ClipData.newPlainText("deviceId", deviceId)
+                        clipboardManager.setPrimaryClip(clipData)
+                        Toast.makeText(context, "Device ID copied", Toast.LENGTH_SHORT).show()
+                    }) {
+                        Icon(imageVector = Icons.Default.Share, contentDescription = "Copy ID", tint = MaterialTheme.colorScheme.primary)
                     }
-
-                    // Show Android hash (64-char) derived from deviceId for migration support
-                    // We now use the full SHA-256 hash to avoid incorrect padding with '0's.
-                    val androidHash = remember {
-                        try {
-                            val source = deviceId ?: ""
-                            if (source.isEmpty()) "" else {
-                                val digest = java.security.MessageDigest.getInstance("SHA-256")
-                                val hashBytes = digest.digest(source.toByteArray(java.nio.charset.StandardCharsets.UTF_8))
-                                hashBytes.joinToString("") { "%02x".format(it) }
-                            }
-                        } catch (e: Exception) { "" }
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "Android hash:",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            text = androidHash,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color.Gray,
-                            modifier = Modifier.weight(1f)
-                        )
-                        IconButton(onClick = {
-                            try {
-                                val clipboardManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                val clipData = ClipData.newPlainText("android_hash", androidHash)
-                                clipboardManager.setPrimaryClip(clipData)
-                                Toast.makeText(context, "Android hash copied", Toast.LENGTH_SHORT).show()
-                            } catch (e: Exception) {
-                                Toast.makeText(context, "Copy failed", Toast.LENGTH_SHORT).show()
-                            }
-                        }) {
-                            Icon(imageVector = Icons.Default.Share, contentDescription = "Copy hash", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
-                        }
-                    }
-
-                     Text(text = "Version: $versionName", style = MaterialTheme.typography.bodyMedium)
-
-                    Spacer(modifier = Modifier.padding(8.dp))
-                    HorizontalDivider()
-                    Spacer(modifier = Modifier.padding(8.dp))
                 }
 
-                // Show loading indicator or error message
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Android hash + copy
+                val androidHash = remember {
+                    try {
+                        val source = deviceId ?: ""
+                        if (source.isEmpty()) "" else {
+                            val digest = java.security.MessageDigest.getInstance("SHA-256")
+                            val hashBytes = digest.digest(source.toByteArray(java.nio.charset.StandardCharsets.UTF_8))
+                            hashBytes.joinToString("") { "%02x".format(it) }
+                        }
+                    } catch (e: Exception) { "" }
+                }
+
+                Text(text = "Android hash:", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Text(text = androidHash, color = Color.LightGray, modifier = Modifier.weight(1f))
+                    IconButton(onClick = {
+                        try {
+                            val clipboardManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            val clipData = ClipData.newPlainText("android_hash", androidHash)
+                            clipboardManager.setPrimaryClip(clipData)
+                            Toast.makeText(context, "Android hash copied", Toast.LENGTH_SHORT).show()
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "Copy failed", Toast.LENGTH_SHORT).show()
+                        }
+                    }) {
+                        Icon(imageVector = Icons.Default.Share, contentDescription = "Copy hash", tint = MaterialTheme.colorScheme.primary)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(text = "Version: $versionName", style = MaterialTheme.typography.bodyMedium, color = Color.LightGray)
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Content area: loading / error / HTML webview
                 if (isLoading.value) {
-                    CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
+                    CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally), color = MaterialTheme.colorScheme.primary)
                 } else if (errorMessage.value != null) {
-                    Text(
-                        text = "Error: ${errorMessage.value}",
-                        color = Color.Red,
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(16.dp)
-                    )
+                    Text(text = "Error: ${errorMessage.value}", color = Color.Red, modifier = Modifier.padding(8.dp))
                 } else if (htmlContent.value != null) {
-                    // Show the fetched HTML content in a WebView
                     val aboutBase = aboutUrlState.value ?: ""
                     AndroidView(
-                        factory = { ctx ->
-                            WebView(ctx).apply {
-                                settings.apply {
-                                    javaScriptEnabled = true
-                                    domStorageEnabled = true
-                                    loadWithOverviewMode = true
-                                    useWideViewPort = true
-                                    setSupportZoom(true)
-                                    builtInZoomControls = true
-                                    displayZoomControls = false
-                                }
-                                // Webview will handle its own scrolling
-                                isNestedScrollingEnabled = true
+                        factory = { ctx -> WebView(ctx).apply {
+                            settings.apply {
+                                javaScriptEnabled = true
+                                domStorageEnabled = true
+                                loadWithOverviewMode = true
+                                useWideViewPort = true
+                                setSupportZoom(true)
+                                builtInZoomControls = true
+                                displayZoomControls = false
                             }
-                        },
-                        update = { web ->
-                            try {
-                                web.loadDataWithBaseURL(aboutBase, htmlContent.value ?: "", "text/html", "utf-8", null)
-                            } catch (e: Exception) {
-                                Log.w("AboutAppDialog", "Failed to load HTML into WebView: ${e.message}")
-                            }
-                        },
+                            isNestedScrollingEnabled = true
+                        } },
+                        update = { web -> try { web.loadDataWithBaseURL(aboutBase, htmlContent.value ?: "", "text/html", "utf-8", null) } catch (e: Exception) { Log.w("AboutAppDialog","Failed to load HTML into WebView: ${e.message}") } },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .weight(1f, fill = false)
-                            .heightIn(min = 400.dp, max = 600.dp)
+                            .heightIn(min = 300.dp, max = 600.dp)
                     )
                 }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // OK button (inside the dialog content so there is no external border)
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                    TextButton(onClick = onDismiss) {
+                        Text(text = "OK")
+                    }
+                }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("OK") }
         }
-    )
+    }
 }
 
 @Composable
@@ -1230,8 +1229,13 @@ fun WebViewScreen(url: String, allowedHost: String?, permissionStatus: Boolean, 
 
                 webChromeClient = object : WebChromeClient() {
                     override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
-                        Log.i("WebViewConsole", "${consoleMessage?.message()} -- ${consoleMessage?.sourceId()} (${consoleMessage?.lineNumber()})")
-                        return super.onConsoleMessage(consoleMessage)
+
+                        try {
+                            Log.d("WVC", "${consoleMessage?.message()} ${consoleMessage?.sourceId()}:${consoleMessage?.lineNumber()}")
+                        } catch (e: Exception) {
+                            // ignore logging failures
+                        }
+                        return true
                     }
 
                     // Handle window.open() calls so they load in the same WebView (prevents blank popup windows)
@@ -1367,7 +1371,7 @@ fun LoadingScreen(modifier: Modifier = Modifier) {
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Image(
-            painter = painterResource(id = R.drawable.brand_logo),
+            painter = painterResource(id = R.drawable.splash_image),
             contentDescription = "Brand logo",
             modifier = Modifier.fillMaxWidth(0.6f),
             contentScale = ContentScale.Fit
@@ -1403,57 +1407,114 @@ fun AppTopBar(
     onShareRequested: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val context = LocalContext.current
     val showMenu = remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
 
-    TopAppBar(
-        title = { Text(text = "${stringResource(id = brandRes)} (${BuildConfig.ENV_NAME})", color = colorResource(id = R.color.golden_yellow)) },
-        colors = TopAppBarDefaults.topAppBarColors(
-            containerColor = colorResource(id = R.color.royal_blue_100),
-            titleContentColor = colorResource(id = R.color.golden_yellow),
-            actionIconContentColor = colorResource(id = R.color.golden_yellow)
-        ),
-        modifier = modifier,
-        actions = {
-            if (currentUrl != null) {
-                IconButton(onClick = { onShareRequested() }) {
-                    Icon(Icons.Filled.Share, contentDescription = "Share snapshot", tint = colorResource(id = R.color.golden_yellow))
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(80.dp)
+    ) {
+        // 🔹 Full-width background
+        Image(
+            painter = painterResource(id = R.drawable.cosmic_bg_landscape),
+            contentDescription = null,
+            modifier = Modifier.matchParentSize(),
+            contentScale = ContentScale.Crop
+        )
+
+        // 🔹 Center logo
+        Image(
+            painter = painterResource(id = R.drawable.brand_name),
+            contentDescription = "App Logo",
+            modifier = Modifier
+                .fillMaxWidth(0.3f)   // 🔥 responsive size
+                .wrapContentHeight()
+                .align(Alignment.Center)
+        )
+
+        // 🔹 Transparent TopAppBar OVERLAY (menu stays same)
+        TopAppBar(
+            title = {},
+            colors = TopAppBarDefaults.topAppBarColors(
+                containerColor = Color.Transparent,
+                actionIconContentColor = colorResource(id = R.color.golden_yellow)
+            ),
+            modifier = Modifier.matchParentSize(),
+            actions = {
+                if (currentUrl != null) {
+                    IconButton(onClick = { onShareRequested() }) {
+                        Icon(
+                            Icons.Filled.Share,
+                            contentDescription = "Share snapshot",
+                            tint = colorResource(id = R.color.golden_yellow)
+                        )
+                    }
+                }
+
+                IconButton(onClick = { showMenu.value = true }) {
+                    Icon(
+                        Icons.Default.MoreVert,
+                        contentDescription = "More options",
+                        tint = colorResource(id = R.color.golden_yellow)
+                    )
+                }
+
+                DropdownMenu(
+                    expanded = showMenu.value,
+                    onDismissRequest = { showMenu.value = false },
+                    modifier = Modifier
+                        .width(200.dp) // 🔥 important (adjust as needed)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                    ) {
+                        Image(
+                            painter = painterResource(id = R.drawable.cosmic_bg_menu),
+                            contentDescription = null,
+                            modifier = Modifier.matchParentSize(),
+                            contentScale = ContentScale.Crop
+                        )
+
+                        Column {
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        text = stringResource(id = R.string.share),
+                                        color = colorResource(id = R.color.golden_yellow)
+                                    )
+                                },
+                                onClick = {
+                                    coroutineScope.launch {
+                                        showMenu.value = false
+                                        kotlinx.coroutines.delay(120)
+                                        onShareRequested()
+                                    }
+                                }
+                            )
+
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        text = stringResource(id = R.string.about),
+                                        color = colorResource(id = R.color.golden_yellow)
+                                    )
+                                },
+                                onClick = {
+                                    coroutineScope.launch {
+                                        showMenu.value = false
+                                        kotlinx.coroutines.delay(120)
+                                        onAboutRequested()
+                                    }
+                                }
+                            )
+                        }
+                    }
                 }
             }
-
-            IconButton(onClick = { showMenu.value = true }) {
-                Icon(Icons.Default.MoreVert, contentDescription = "More options", tint = colorResource(id = R.color.golden_yellow))
-            }
-
-            DropdownMenu(
-                expanded = showMenu.value,
-                onDismissRequest = { showMenu.value = false }
-            ) {
-                DropdownMenuItem(
-                    text = { Text(text = stringResource(id = R.string.share)) },
-                    onClick = {
-                        coroutineScope.launch {
-                            showMenu.value = false
-                            kotlinx.coroutines.delay(120)
-                            onShareRequested()
-                        }
-                    }
-                )
-
-                DropdownMenuItem(
-                    text = { Text(text = stringResource(id = R.string.about)) },
-                    onClick = {
-                        coroutineScope.launch {
-                            showMenu.value = false
-                            kotlinx.coroutines.delay(120)
-                            onAboutRequested()
-                        }
-                    }
-                )
-            }
-        }
-    )
+        )
+    }
 }
 
 @Composable
