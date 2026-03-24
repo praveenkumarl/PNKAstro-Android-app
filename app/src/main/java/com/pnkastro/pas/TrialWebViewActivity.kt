@@ -239,8 +239,20 @@ class TrialWebViewActivity : ComponentActivity() {
                                             val uri: Uri = request?.url ?: return false
                                             Log.d(TAG, "shouldOverride: $uri")
 
+                                            // If the link is an HTTP/HTTPS URL, force it to load inside this WebView so the app
+                                            // retains cookies and the Android ID handling remains within the app.
+                                            val scheme = uri.scheme?.lowercase()
+                                            if (scheme == "http" || scheme == "https") {
+                                                try {
+                                                    view?.loadUrl(uri.toString())
+                                                } catch (e: Exception) {
+                                                    Log.w(TAG, "Failed to load URL in-WebView: ${e.message}")
+                                                }
+                                                return true
+                                            }
+
                                             // Intercept the custom scheme used by the server to indicate trial activation
-                                            if (uri.scheme == "myapp" && uri.host == "trial") {
+                                            if (scheme == "myapp" && uri.host == "trial") {
                                                 val activated = (uri.getQueryParameter("activated") == "1") || (uri.getQueryParameter("activated")?.lowercase() == "true")
                                                 val expiry = uri.getQueryParameter("expiry") ?: ""
 
@@ -253,8 +265,15 @@ class TrialWebViewActivity : ComponentActivity() {
                                                 return true
                                             }
 
-                                            // Otherwise let the WebView load the URL normally
-                                            return false
+                                            // For other schemes (mailto:, intent:, market:, etc.) allow the system to handle them.
+                                            return try {
+                                                val external = Intent(Intent.ACTION_VIEW, uri)
+                                                startActivity(external)
+                                                true
+                                            } catch (e: Exception) {
+                                                Log.w(TAG, "No external handler for $uri: ${e.message}")
+                                                false
+                                            }
                                         }
 
                                         override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
@@ -399,6 +418,13 @@ class TrialWebViewActivity : ComponentActivity() {
                         putExtra("current_imei", response.current_imei)
                         putExtra("expiry", response.expiry)
                         putExtra("message", response.message)
+                        // If server returned an android_hash (new identifier), include it so the caller can persist it
+                        if (!response.android_hash.isNullOrBlank()) {
+                            putExtra("android_hash", response.android_hash)
+                        }
+                        // Also include phone/imei fields when available to aid caller UI
+                        if (!response.phone.isNullOrBlank()) putExtra("phone", response.phone)
+                        if (!response.imei.isNullOrBlank()) putExtra("imei", response.imei)
                     }
 
                     // Let caller decide; we still show a short toast for instant feedback

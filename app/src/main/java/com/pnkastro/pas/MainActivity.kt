@@ -23,6 +23,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
@@ -71,6 +74,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.security.MessageDigest
 import java.util.UUID
+import org.json.JSONObject
 
 class MainActivity : ComponentActivity() {
     private val TAG = "PAS_AUTH"
@@ -78,7 +82,9 @@ class MainActivity : ComponentActivity() {
     private val PREF_STOP_SENDING_IMEI = "stop_sending_imei"
 
     // Request code used for startActivityForResult when launching TrialWebViewActivity
-    private val TRIAL_REQUEST_CODE = 1001
+    // Use Activity Result API launcher for trial flow (reliable delivery)
+    private lateinit var trialLauncher: ActivityResultLauncher<android.content.Intent>
+    private val TRIAL_REQUEST_CODE = 1001 // legacy constant (kept for compatibility)
 
     // Centralized launcher for the trial flow so both options menu and Compose UI can invoke it
     private fun launchTrialFlow() {
@@ -115,7 +121,7 @@ class MainActivity : ComponentActivity() {
             val intent = android.content.Intent(this, TrialWebViewActivity::class.java).apply {
                 putExtra("url", url)
             }
-            startActivityForResult(intent, TRIAL_REQUEST_CODE)
+            trialLauncher.launch(intent)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to launch TrialWebViewActivity: ${e.message}")
             Toast.makeText(this, "Unable to open trial view", Toast.LENGTH_SHORT).show()
@@ -189,6 +195,15 @@ class MainActivity : ComponentActivity() {
     // (MediaDrm id or ANDROID_ID) by computing SHA-256 and NOT truncating or padding to 48.
     // The server expects the full SHA-256 (64 hex chars).
     private fun getAndroidHash48(): String {
+        // Prefer an android_hash persisted from the server (trial/migration) if available.
+        try {
+            val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val stored = prefs.getString("android_hash", null)
+            if (!stored.isNullOrBlank()) return stored
+        } catch (e: Exception) {
+            // ignore and fall back to computed value
+        }
+
         val source = getSourceAndroidId()
         if (source.isEmpty()) return ""
         return try {
@@ -222,8 +237,30 @@ class MainActivity : ComponentActivity() {
                     else -> "Migration available"
                 }
 
-                // Give a clear, correct UI message and return early. Let the rest of the app open migration UI if needed.
+                // Give a clear, correct UI message and continue authentication so the app reloads into logged-in flow
                 Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+
+                // Persist android_hash from the result if provided so subsequent auth calls use it
+                try {
+                    val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    val returnedHash = data?.getStringExtra("android_hash")
+                    if (!returnedHash.isNullOrBlank()) {
+                        prefs.edit().putString("android_hash", returnedHash).apply()
+                        prefs.edit().putBoolean(PREF_STOP_SENDING_IMEI, true).apply()
+                        Log.d(TAG, "Persisted android_hash from activity result and stopped sending imei")
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to persist android_hash from activity result: ${e.message}")
+                }
+
+                // Re-run authentication to pick up migrated state and load the site inside the app
+                // Clear webUrlState to force a reload and then authenticate
+                webUrlState.value = null
+                authenticateAndGetUrl(deviceIdValue.value ?: "") { newUrl ->
+                    webUrlState.value = newUrl
+                    allowedHostState.value = try { newUrl?.let { URL(it).host } } catch (e: Exception) { null }
+                }
+
                 return
             }
 
@@ -232,6 +269,19 @@ class MainActivity : ComponentActivity() {
             val redirectUrl = data?.getStringExtra("redirect_url")
 
             if (activated) {
+                // If server provided an android_hash during activation/migration, persist it first
+                try {
+                    val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    val returnedHash = data?.getStringExtra("android_hash")
+                    if (!returnedHash.isNullOrBlank()) {
+                        prefs.edit().putString("android_hash", returnedHash).apply()
+                        prefs.edit().putBoolean(PREF_STOP_SENDING_IMEI, true).apply()
+                        Log.d(TAG, "Persisted android_hash from activity result (activated) and stopped sending imei")
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to persist android_hash from activity result (activated): ${e.message}")
+                }
+
                 // Save expiry and android id in SharedPreferences as required
                 val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 // Persist the platform source Android ID (plain ANDROID_ID) for trial records
@@ -292,6 +342,97 @@ class MainActivity : ComponentActivity() {
             hasLocationPermission.value = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
                                          permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
             Log.d(TAG, "Location permissions result: ${hasLocationPermission.value}")
+        }
+
+        // Initialize trial flow launcher using Activity Result API
+        trialLauncher = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()) { result ->
+            val resultCode = result.resultCode
+            val data = result.data
+            if (resultCode == Activity.RESULT_OK) {
+                // Mirror the previous onActivityResult behavior here to ensure reliable handling
+                val migrationAvailable = data?.getBooleanExtra("migration_available", false) ?: false
+                if (migrationAvailable) {
+                    Log.d(TAG, "trialLauncher: migration_available=true, extras=${data?.extras}")
+                    val migrationType = data?.getStringExtra("migration_type") ?: ""
+                    val currentImei = data?.getStringExtra("current_imei") ?: ""
+                    val expiry = data?.getStringExtra("expiry") ?: ""
+                    val message = data?.getStringExtra("message") ?: when (migrationType) {
+                        "subscription" -> "Active subscription found, expires: $expiry"
+                        "account" -> if (currentImei.isNotBlank()) "Account found for IMEI: $currentImei" else "Account found"
+                        else -> "Migration available"
+                    }
+
+                    Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+                    // Re-run authentication so app reloads into logged-in flow
+                    // Persist android_hash if provided so auth uses it immediately
+                    try {
+                        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                        val returnedHash = data?.getStringExtra("android_hash")
+                        if (!returnedHash.isNullOrBlank()) {
+                            prefs.edit().putString("android_hash", returnedHash).apply()
+                            prefs.edit().putBoolean(PREF_STOP_SENDING_IMEI, true).apply()
+                            Log.d(TAG, "trialLauncher: persisted android_hash and stopped sending imei")
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "trialLauncher: failed to persist android_hash: ${e.message}")
+                    }
+
+                    webUrlState.value = null
+                    authenticateAndGetUrl(deviceIdValue.value ?: "") { newUrl ->
+                        webUrlState.value = newUrl
+                        allowedHostState.value = try { newUrl?.let { URL(it).host } } catch (e: Exception) { null }
+                    }
+                    return@registerForActivityResult
+                }
+
+                val activated = data?.getBooleanExtra("activated", false) ?: false
+                val expiry = data?.getStringExtra("expiry") ?: ""
+                val redirectUrl = data?.getStringExtra("redirect_url")
+
+                if (activated) {
+                    // Persist android_hash from activation result if present before continuing
+                    try {
+                        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                        val returnedHash = data?.getStringExtra("android_hash")
+                        if (!returnedHash.isNullOrBlank()) {
+                            prefs.edit().putString("android_hash", returnedHash).apply()
+                            prefs.edit().putBoolean(PREF_STOP_SENDING_IMEI, true).apply()
+                            Log.d(TAG, "trialLauncher: persisted android_hash from activation result and stopped sending imei")
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "trialLauncher: failed to persist android_hash from activation result: ${e.message}")
+                    }
+
+                    val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    val currentDeviceId = getSourceAndroidId()
+                    prefs.edit().apply {
+                        putString("trial_expiry", expiry)
+                        putString("trial_imei", currentDeviceId)
+                        putBoolean("is_trial_active", true)
+                        apply()
+                    }
+
+                    Log.d(TAG, "trialLauncher: Trial activated, expiry available. Redirecting...")
+
+                    val baseUrl = try {
+                        if (BuildConfig.SITE_URL.isNotBlank()) BuildConfig.SITE_URL else "https://pkastro.com/index.php"
+                    } catch (e: Exception) {
+                        "https://pkastro.com/index.php"
+                    }
+
+                    val finalUrl = if (redirectUrl != null && !redirectUrl.isNullOrEmpty() && redirectUrl.startsWith("/")) {
+                        val uri = Uri.parse(baseUrl)
+                        "${uri.scheme}://${uri.host}$redirectUrl"
+                    } else {
+                        baseUrl
+                    }
+
+                    webUrlState.value = null
+                    authenticateAndGetUrl(deviceIdValue.value ?: "") { newUrl ->
+                        webUrlState.value = newUrl ?: finalUrl
+                    }
+                }
+            }
         }
 
         // Request location permissions on app load if not already granted
@@ -602,7 +743,7 @@ class MainActivity : ComponentActivity() {
         Log.d(TAG, "DEBUG: sourceId='$sourceId', androidHash='$androidHash'")
 
         val authUrl = try {
-            // Do not pre-encode the deviceId here - Uri.Builder.appendQueryParameter will encode it.
+            // Do not use naive string concatenation fallbacks. Use Uri builder to safely append params.
             val uriBuilder = Uri.parse(authBaseFinal).buildUpon()
             if (!stopSendingImeis && sourceId.isNotBlank()) {
                 uriBuilder.appendQueryParameter("key", sourceId)
@@ -615,19 +756,12 @@ class MainActivity : ComponentActivity() {
             if (built.startsWith("http://", ignoreCase = true)) built = built.replaceFirst("http://", "https://")
             built
         } catch (e: Exception) {
-            // fallback: naive append but still prefer HTTPS; ensure we URL-encode values here
-            var builder = authBaseNormalized
-             if (!stopSendingImeis && sourceId.isNotBlank()) {
-                 val encodedKey = try { java.net.URLEncoder.encode(sourceId, java.nio.charset.StandardCharsets.UTF_8.toString()) } catch (ex: Exception) { sourceId }
-                 builder = if (builder.contains("?")) "$builder&key=$encodedKey" else "$builder?key=$encodedKey"
-             }
-             if (androidHash.isNotBlank()) {
-                 val safeHash = try { java.net.URLEncoder.encode(androidHash, java.nio.charset.StandardCharsets.UTF_8.toString()) } catch (ex: Exception) { androidHash }
-                 builder = if (builder.contains("?")) "$builder&android_hash=$safeHash" else "$builder?android_hash=$safeHash"
-             }
-             if (builder.startsWith("http://", ignoreCase = true)) builder = builder.replaceFirst("http://", "https://")
-              builder
-         }
+            Log.e(TAG, "Failed to construct authUrl using Uri builder: ${e.message}")
+            // If building the URL failed for any reason, fall back to the normalized base (HTTPS enforced)
+            try {
+                if (authBaseFinal.startsWith("http://", ignoreCase = true)) authBaseFinal.replaceFirst("http://", "https://") else authBaseFinal
+            } catch (ex: Exception) { authBaseFinal }
+        }
 
         Log.d(TAG, "Starting authentication. originalBuildConfigBase=${maskSensitiveQuery(authBase)}, normalizedBase=${maskSensitiveQuery(authBaseFinal)}, authUrl=${maskSensitiveQuery(authUrl)}")
         Log.d(TAG, "Site base: original=${maskSensitiveQuery(siteBase)}, normalized=${maskSensitiveQuery(siteBaseFinal)}")
@@ -704,8 +838,83 @@ class MainActivity : ComponentActivity() {
                                 } catch (e: Exception) {
                                     ""
                                 }
-                                Log.d(TAG, "Response body length: ${responseBody.length}")
+                                Log.d(TAG, "Response body length: ${'$'}{responseBody.length}")
                                 // Do not log full auth response body as it may contain sensitive tokens/ids
+
+                                // If the server returned JSON indicating an error (e.g. {"success":false, "error":"..."}), surface it to the user
+                                try {
+                                    val trimmed = responseBody.trim()
+                                    if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+                                        try {
+                                            val json = JSONObject(trimmed)
+
+                                            // If server requests an upgrade (trial ended), open the provided upgrade URL
+                                            val action = json.optString("action", "")
+                                            if (action.isNotBlank() && action.equals("upgrade", ignoreCase = true)) {
+                                                // Accept either upgrade_url or upgradeUrl
+                                                val upgradeUrl = json.optString("upgrade_url", json.optString("upgradeUrl", ""))
+                                                if (!upgradeUrl.isNullOrBlank()) {
+                                                    // Launch inside the app WebView so the app's cookies and device id handling still apply
+                                                    withContext(Dispatchers.Main) {
+                                                        try {
+                                                            Toast.makeText(this@MainActivity, "Trial ended — opening upgrade page", Toast.LENGTH_LONG).show()
+                                                            // Set webUrlState and allowedHostState so MainActivity's Compose UI will load it in the in-app WebView
+                                                            webUrlState.value = upgradeUrl
+                                                            allowedHostState.value = try { URL(upgradeUrl).host } catch (e: Exception) { null }
+                                                        } catch (e: Exception) {
+                                                            Log.w(TAG, "Failed to open upgrade URL in-app: ${'$'}{e.message}")
+                                                            // Fallback: open external if in-app fails
+                                                            try { openUrlInCustomTab(upgradeUrl) } catch (ex: Exception) { Log.w(TAG, "Fallback external open failed: ${'$'}{ex.message}") }
+                                                        }
+                                                    }
+                                                } else {
+                                                    // No URL provided; surface server message if present
+                                                    val serverMsg = json.optString("error", json.optString("message", "Your trial has ended. Please upgrade."))
+                                                    withContext(Dispatchers.Main) {
+                                                        try { Toast.makeText(this@MainActivity, serverMsg, Toast.LENGTH_LONG).show() } catch (e: Exception) { Log.w(TAG, "Failed to show upgrade toast: ${'$'}{e.message}") }
+                                                    }
+                                                }
+
+                                                Log.d(TAG, "Server requested upgrade action: ${'$'}{trimmed.take(200)}")
+                                                conn.disconnect()
+                                                return@withContext null
+                                            }
+
+                                            // Prefer the human-facing `error` message, but fall back to `debug` when `error` is missing
+                                            if (json.has("success") && !json.optBoolean("success", true)) {
+                                                val serverError = json.optString("error", "")
+                                                val debugInfo = json.optString("debug", "")
+                                                val toastMsg = when {
+                                                    serverError.isNotBlank() -> serverError
+                                                    debugInfo.isNotBlank() -> "Authentication failed: ${'$'}{debugInfo.take(200)}"
+                                                    else -> "Authentication failed"
+                                                }
+
+                                                // Log the debug info at verbose level for diagnostics
+                                                if (debugInfo.isNotBlank()) {
+                                                    Log.w(TAG, "Auth server debug: ${'$'}{debugInfo}")
+                                                }
+
+                                                // Show a user-facing toast on the main thread
+                                                withContext(Dispatchers.Main) {
+                                                    try {
+                                                        android.widget.Toast.makeText(this@MainActivity, toastMsg, android.widget.Toast.LENGTH_LONG).show()
+                                                    } catch (e: Exception) {
+                                                        Log.w(TAG, "Failed to show auth error toast: ${'$'}{e.message}")
+                                                    }
+                                                }
+
+                                                conn.disconnect()
+                                                return@withContext null
+                                            }
+                                        } catch (e: Exception) {
+                                            // not a JSON object we understand; continue normal processing
+                                            Log.d(TAG, "Auth response JSON parse failed: ${'$'}{e.message}")
+                                        }
+                                    }
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "Auth response handling error: ${'$'}{e.message}")
+                                }
 
                                 // Check for automatic trial registration trigger from auth endpoint
                                 if (responseBody.contains("\"action\":\"register\"") && responseBody.contains("\"imei\":")) {
@@ -1045,6 +1254,19 @@ fun AboutAppDialog(
                         Text(text = "OK")
                     }
                 }
+            }
+
+            // Red circular close button aligned to top-right of the dialog
+            IconButton(
+                onClick = onDismiss,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(12.dp)
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(Color.Red)
+            ) {
+                Icon(imageVector = Icons.Default.Close, contentDescription = "Close", tint = Color.White)
             }
         }
     }
@@ -1413,7 +1635,7 @@ fun AppTopBar(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(80.dp)
+            .height(90.dp)
     ) {
         // 🔹 Full-width background
         Image(
@@ -1428,9 +1650,9 @@ fun AppTopBar(
             painter = painterResource(id = R.drawable.brand_name),
             contentDescription = "App Logo",
             modifier = Modifier
-                .fillMaxWidth(0.3f)   // 🔥 responsive size
-                .wrapContentHeight()
-                .align(Alignment.Center)
+                .align(Alignment.Center)   // ✅ centers both horizontally & vertically
+                .fillMaxWidth(0.4f)        // adjust size
+                .offset(y = 6.dp) // 👈 fine-tune if needed
         )
 
         // 🔹 Transparent TopAppBar OVERLAY (menu stays same)
@@ -1452,63 +1674,74 @@ fun AppTopBar(
                     }
                 }
 
-                IconButton(onClick = { showMenu.value = true }) {
-                    Icon(
-                        Icons.Default.MoreVert,
-                        contentDescription = "More options",
-                        tint = colorResource(id = R.color.golden_yellow)
-                    )
-                }
-
-                DropdownMenu(
-                    expanded = showMenu.value,
-                    onDismissRequest = { showMenu.value = false },
-                    modifier = Modifier
-                        .width(200.dp) // 🔥 important (adjust as needed)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                    ) {
-                        Image(
-                            painter = painterResource(id = R.drawable.cosmic_bg_menu),
-                            contentDescription = null,
-                            modifier = Modifier.matchParentSize(),
-                            contentScale = ContentScale.Crop
+                // Anchor the overflow icon and menu in a Box so the DropdownMenu is properly
+                // positioned relative to the IconButton. This makes the menu more reliable
+                // when backgrounds or overlays are used in the TopAppBar.
+                Box(modifier = Modifier.wrapContentSize(Alignment.TopEnd)) {
+                    IconButton(onClick = {
+                        Log.d("AppTopBar", "Overflow icon clicked, toggling menu")
+                        showMenu.value = true
+                    }) {
+                        Icon(
+                            Icons.Default.MoreVert,
+                            contentDescription = "More options",
+                            tint = colorResource(id = R.color.golden_yellow)
                         )
+                    }
 
-                        Column {
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        text = stringResource(id = R.string.share),
-                                        color = colorResource(id = R.color.golden_yellow)
-                                    )
-                                },
-                                onClick = {
-                                    coroutineScope.launch {
-                                        showMenu.value = false
-                                        kotlinx.coroutines.delay(120)
-                                        onShareRequested()
-                                    }
-                                }
+                    DropdownMenu(
+                        expanded = showMenu.value,
+                        onDismissRequest = { showMenu.value = false },
+                        modifier = Modifier
+                            .width(200.dp) // 🔥 important (adjust as needed)
+                    ) {
+                        // provide a decorative background behind the menu items
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                        ) {
+                            Image(
+                                painter = painterResource(id = R.drawable.cosmic_bg_menu),
+                                contentDescription = null,
+                                modifier = Modifier.matchParentSize(),
+                                contentScale = ContentScale.Crop
                             )
 
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        text = stringResource(id = R.string.about),
-                                        color = colorResource(id = R.color.golden_yellow)
-                                    )
-                                },
-                                onClick = {
-                                    coroutineScope.launch {
-                                        showMenu.value = false
-                                        kotlinx.coroutines.delay(120)
-                                        onAboutRequested()
+                            Column {
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = stringResource(id = R.string.share),
+                                            color = colorResource(id = R.color.golden_yellow)
+                                        )
+                                    },
+                                    onClick = {
+                                        coroutineScope.launch {
+                                            showMenu.value = false
+                                            kotlinx.coroutines.delay(120)
+                                            Log.d("AppTopBar", "Share selected from overflow menu")
+                                            onShareRequested()
+                                        }
                                     }
-                                }
-                            )
+                                )
+
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = stringResource(id = R.string.about),
+                                            color = colorResource(id = R.color.golden_yellow)
+                                        )
+                                    },
+                                    onClick = {
+                                        coroutineScope.launch {
+                                            showMenu.value = false
+                                            kotlinx.coroutines.delay(120)
+                                            Log.d("AppTopBar", "About selected from overflow menu")
+                                            onAboutRequested()
+                                        }
+                                    }
+                                )
+                            }
                         }
                     }
                 }
@@ -1547,13 +1780,14 @@ fun PhoneInputDialog(
 
 suspend fun sendKeyChange(phone: String, key: String): Pair<Boolean, String> {
     return try {
-        val site = if (try { BuildConfig.SITE_URL.isNotBlank() } catch (e: Exception) { false }) BuildConfig.SITE_URL else "http://pkastro.com/preprod/index.php"
+        val site = if (try { BuildConfig.SITE_URL.isNotBlank() } catch (e: Exception) { false }) BuildConfig.SITE_URL else "https://pkastro.com/preprod/index.php"
         val base = if (site.contains("index.php")) site.replace("index.php", "key_change.php") else try {
             val u = URL(site)
             val root = "${u.protocol}://${u.host}${if (u.port != -1) ":${u.port}" else ""}"
             "$root/key_change.php"
         } catch (e: Exception) {
-            "http://pkastro.com/preprod/key_change.php"
+            // Use HTTPS production fallback endpoint
+            "https://pkastro.com/preprod/key_change.php"
         }
 
         val encodedPhone = URLEncoder.encode(phone, java.nio.charset.StandardCharsets.UTF_8.toString())
@@ -1641,7 +1875,7 @@ private suspend fun buildUrlWithFreshLocation(context: Context, originalUrl: Str
         params["password"] = mutableListOf(passwordValue)
 
         // If URL targets index.php and we have a deviceId, ensure key param is set/replaced
-        if (originalUrl.contains("index.php")) {
+        if (originalUrl.contains("index.php") && !deviceId.isNullOrEmpty()) {
             // Prefer the platform ANDROID_ID when available (this is the expected 'key' on the server).
             // Fall back to MediaDrm id or random UUID if no stable ID is available.
             val keyToUse = when {
@@ -1690,16 +1924,28 @@ fun buildAboutUrl(context: Context): String {
         } else {
             context.getString(R.string.site_url)
         }
-        if (siteBase.contains("index.php")) {
-            siteBase.replace("index.php", "AboutApp.php")
-        } else if (siteBase.endsWith("/")) {
+
+        // Normalize to HTTPS to avoid cleartext failures on production devices
+        val siteBaseNormalized = try {
+            if (siteBase.startsWith("http://", ignoreCase = true)) {
+                siteBase.replaceFirst("http://", "https://", ignoreCase = true)
+            } else {
+                siteBase
+            }
+        } catch (e: Exception) {
+            siteBase
+        }
+
+        if (siteBaseNormalized.contains("index.php")) {
+            siteBaseNormalized.replace("index.php", "AboutApp.php")
+        } else if (siteBaseNormalized.endsWith("/")) {
             // Correctly append AboutApp.php when siteBase already ends with '/'
-            "${siteBase}AboutApp.php"
+            "${siteBaseNormalized}AboutApp.php"
         } else {
-            "$siteBase/AboutApp.php"
+            "$siteBaseNormalized/AboutApp.php"
         }
     } catch (e: Exception) {
-        // Fallback to a known endpoint
+        // Fallback to a known endpoint (HTTPS)
         "https://pkastro.com/AboutApp.php"
     }
 }
@@ -1715,3 +1961,4 @@ fun sha256Hex(input: String): String {
         ""
     }
 }
+

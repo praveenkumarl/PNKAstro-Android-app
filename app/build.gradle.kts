@@ -1,3 +1,6 @@
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -25,27 +28,34 @@ android {
             dimension = "environment"
             applicationIdSuffix = ".dev"
             versionNameSuffix = "-dev"
-            buildConfigField("String", "AUTH_URL", "\"http://127.0.0.1/pkastro_test/athenticate_mobile.php\"")
-            buildConfigField("String", "SITE_URL", "\"http://127.0.0.1/pkastro_test/index.php\"")
-            buildConfigField("String", "TRIAL_URL", "\"http://127.0.0.1/pkastro_test/new_registration_mobile_trial.php\"")
+            // Use HTTPS for local/dev endpoints to enforce HTTPS usage during testing as requested
+            buildConfigField("String", "AUTH_URL", "\"https://127.0.0.1/pkastro_test/athenticate_mobile.php\"")
+            buildConfigField("String", "SITE_URL", "\"https://127.0.0.1/pkastro_test/index.php\"")
+            buildConfigField("String", "TRIAL_URL", "\"https://127.0.0.1/pkastro_test/new_registration_mobile_trial.php\"")
             buildConfigField("String", "ENV_NAME", "\"DEV\"")
+            // Add flavor-specific app name shown on launcher
+            resValue("string", "app_name", "\"PNKAstro (DEV)\"")
         }
         create("preprod") {
             dimension = "environment"
             applicationIdSuffix = ".preprod"
             versionNameSuffix = "-preprod"
-            buildConfigField("String", "AUTH_URL", "\"http://pkastro.com/preprod/athenticate_mobile.php\"")
-            buildConfigField("String", "SITE_URL", "\"http://pkastro.com/preprod/index.php\"")
-            buildConfigField("String", "TRIAL_URL", "\"http://pkastro.com/preprod/new_registration_mobile_trial.php\"")
+            buildConfigField("String", "AUTH_URL", "\"https://pkastro.com/pnkastro_preprod/athenticate_mobile.php\"")
+            buildConfigField("String", "SITE_URL", "\"https://pkastro.com/pnkastro_preprod/index.php\"")
+            buildConfigField("String", "TRIAL_URL", "\"https://pkastro.com/pnkastro_preprod/new_registration_mobile_trial.php\"")
             buildConfigField("String", "ENV_NAME", "\"PREPROD\"")
+            // Add flavor-specific app name shown on launcher
+            resValue("string", "app_name", "\"PNKAstro (PREPROD)\"")
         }
         create("prod") {
             dimension = "environment"
             // Keep original applicationId for prod
-            buildConfigField("String", "AUTH_URL", "\"http://pkastro.com/athenticate_mobile.php\"")
-            buildConfigField("String", "SITE_URL", "\"http://pkastro.com/index.php\"")
-            buildConfigField("String", "TRIAL_URL", "\"http://pkastro.com/new_registration_mobile_trial.php\"")
+            buildConfigField("String", "AUTH_URL", "\"https://pkastro.com/pnkastro_prod/athenticate_mobile.php\"")
+            buildConfigField("String", "SITE_URL", "\"https://pkastro.com/pnkastro_prod/index.php\"")
+            buildConfigField("String", "TRIAL_URL", "\"https://pkastro.com/pnkastro_prod/new_registration_mobile_trial.php\"")
             buildConfigField("String", "ENV_NAME", "\"PROD\"")
+            // Prod uses the normal app name
+            resValue("string", "app_name", "\"PNKAstro\"")
         }
     }
 
@@ -83,50 +93,108 @@ android {
     // NOTE: removed earlier androidComponents variant output logic (AGP API mismatch in Kotlin script).
 }
 
-// After APKs are produced, rename them to the requested canonical format.
-// This task is non-invasive: it only renames files under build/outputs/apk after assemble tasks complete.
-tasks.register("renameApks") {
+// After APKs/bundles are produced, copy/rename them to a canonical format under build/outputs/dist.
+// We copy (don't delete) to avoid issues with file locks during parallel processes and keep original artifacts intact.
+tasks.register("collectAndRenameArtifacts") {
     doLast {
-        val apkRoot = layout.buildDirectory.dir("outputs/apk").get().asFile
-        if (!apkRoot.exists()) {
-            println("renameApks: APK output directory not found: ${apkRoot.absolutePath}")
+        val outputsRoot = layout.buildDirectory.dir("outputs").get().asFile
+        val apkRoot = File(outputsRoot, "apk")
+        val bundleRoot = File(outputsRoot, "bundle")
+        val distDir = layout.buildDirectory.dir("outputs/dist").get().asFile
+        if (!distDir.exists()) distDir.mkdirs()
+
+        val brand = "PNKAstro"
+        val collected = mutableListOf<File>()
+
+        if (apkRoot.exists()) collected += apkRoot.walkTopDown().filter { it.isFile && it.extension.equals("apk", true) }.toList()
+        if (bundleRoot.exists()) collected += bundleRoot.walkTopDown().filter { it.isFile && (it.extension.equals("aab", true) || it.extension.equals("apk", true)) }.toList()
+
+        if (collected.isEmpty()) {
+            println("collectAndRenameArtifacts: No APK/AAB files found under ${outputsRoot.absolutePath}")
             return@doLast
         }
 
-        val brand = "PNKAstro"
-
-        apkRoot.walkTopDown().filter { it.isFile && it.extension.equals("apk", ignoreCase = true) }.forEach { apkFile ->
-            // Skip already renamed files to avoid infinite loops or double renaming
-            if (apkFile.name.startsWith(brand)) return@forEach
-
+        collected.forEach { file ->
             try {
-                // Better path parsing: build/outputs/apk/<flavor>/<buildType>/app-<flavor>-<buildType>.apk
-                val buildType = apkFile.parentFile?.name ?: "unknown"
-                val flavor = apkFile.parentFile?.parentFile?.name ?: "generic"
+                val parent = file.parentFile
+                val grandParent = parent?.parentFile
+                var flavor = "generic"
+                var buildType = "unknown"
 
-                // Get version name from the project
+                if (parent != null && (parent.name.equals("debug", true) || parent.name.equals("release", true)
+                            || parent.name.endsWith("Debug", true) || parent.name.endsWith("Release", true))) {
+                    buildType = parent.name
+                    flavor = grandParent?.name ?: "generic"
+                } else {
+                    val tokens = file.nameWithoutExtension.split('-').filter { it.isNotBlank() }
+                    if (tokens.size >= 3 && tokens[0].equals("app", true)) {
+                        flavor = tokens[1]
+                        buildType = tokens[2]
+                    } else if (tokens.size == 2 && tokens[0].equals("app", true)) {
+                        buildType = tokens[1]
+                    } else {
+                        buildType = parent?.name ?: "unknown"
+                        flavor = grandParent?.name ?: "generic"
+                    }
+                }
+
                 val versionName = android.defaultConfig.versionName ?: "1.0"
+                val ext = file.extension
+                val newName = "${brand}-${flavor}-${buildType}-v${versionName}.${ext}"
+                val target = File(distDir, newName)
 
-                val newName = "${brand}-${flavor}-${buildType}-v${versionName}.apk"
-                val newFile = File(apkFile.parentFile, newName)
-
-                if (newFile.exists()) {
-                    newFile.delete()
+                // Try moving (rename) first with retries - this will remove the original when successful
+                var moved = false
+                val maxAttempts = 5
+                var attempt = 0
+                while (!moved && attempt < maxAttempts) {
+                    attempt++
+                    try {
+                        Files.move(file.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+                        println("collectAndRenameArtifacts: Moved ${file.relativeTo(project.rootDir)} -> ${target.relativeTo(project.rootDir)} (attempt $attempt)")
+                        moved = true
+                    } catch (e: Exception) {
+                        println("collectAndRenameArtifacts: Move attempt $attempt failed for ${file.name}: ${e.message}")
+                        try {
+                            Thread.sleep(300L)
+                        } catch (ie: InterruptedException) {
+                            // ignore
+                        }
+                    }
                 }
 
-                if (apkFile.renameTo(newFile)) {
-                    println("renameApks: Renamed ${apkFile.name} -> ${newName}")
+                if (!moved) {
+                    // Fallback: copy then try to delete original
+                    try {
+                        file.copyTo(target, overwrite = true)
+                        println("collectAndRenameArtifacts: Copied ${file.relativeTo(project.rootDir)} -> ${target.relativeTo(project.rootDir)}")
+                        try {
+                            if (file.delete()) {
+                                println("collectAndRenameArtifacts: Deleted original ${file.relativeTo(project.rootDir)}")
+                            } else {
+                                println("collectAndRenameArtifacts: Could not delete original ${file.relativeTo(project.rootDir)} (may be locked)")
+                            }
+                        } catch (de: Exception) {
+                            println("collectAndRenameArtifacts: Failed to delete original ${file.relativeTo(project.rootDir)}: ${de.message}")
+                        }
+                    } catch (ce: Exception) {
+                        println("collectAndRenameArtifacts: Copy fallback failed for ${file.absolutePath}: ${ce.message}")
+                    }
                 }
+
             } catch (e: Exception) {
-                println("renameApks: Failed to rename ${apkFile.absolutePath}: ${e.message}")
+                println("collectAndRenameArtifacts: Error processing ${file.absolutePath}: ${e.message}")
             }
         }
     }
 }
 
-// Ensure the rename task runs automatically after any assemble task
-tasks.matching { it.name.startsWith("assemble") }.configureEach {
-    finalizedBy(tasks.named("renameApks"))
+// Ensure the collect task runs after assemble, bundle, or package style tasks so it catches signed APKs/AABs
+tasks.matching { task ->
+    val name = task.name
+    name.startsWith("assemble", true) || name.startsWith("bundle", true) || name.startsWith("package", true)
+}.configureEach {
+    finalizedBy(tasks.named("collectAndRenameArtifacts"))
 }
 
 dependencies {
