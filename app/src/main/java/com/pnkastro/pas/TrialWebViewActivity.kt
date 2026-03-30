@@ -18,6 +18,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.ui.Modifier
@@ -36,6 +37,7 @@ import android.webkit.GeolocationPermissions
 import androidx.core.content.ContextCompat
 import android.Manifest
 import android.content.pm.PackageManager
+import android.view.WindowManager
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
@@ -67,9 +69,11 @@ class TrialWebViewActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Ensure the system applies window insets so the Compose TopAppBar is not covered by the WebView.
-        // Using setDecorFitsSystemWindows(true) instructs the system to inset the content so the top bar remains visible.
-        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, true)
+        // Disable decor fits system windows to allow Compose to handle insets and IME padding correctly.
+        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
+
+        // Set soft input mode to adjust Resize so the window resizes when the keyboard appears.
+        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
 
         val url = intent.getStringExtra("url") ?: ""
 
@@ -102,7 +106,8 @@ class TrialWebViewActivity : ComponentActivity() {
                             }
                         )
                     },
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier.fillMaxSize().imePadding(),
+                    contentWindowInsets = WindowInsets(0, 0, 0, 0)
                 ) { innerPadding ->
                     Box(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
                         AndroidView(

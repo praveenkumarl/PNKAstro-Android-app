@@ -66,6 +66,7 @@ import android.content.Intent
 import android.app.Activity
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.view.WindowManager
 import androidx.core.content.FileProvider
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -325,6 +326,12 @@ class MainActivity : ComponentActivity() {
         val splashScreen = installSplashScreen()
 
         super.onCreate(savedInstanceState)
+        // Disable decor fits system windows to allow Compose to handle insets and IME padding correctly.
+        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
+
+        // Set soft input mode to adjust Resize so the window resizes when the keyboard appears.
+        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+
         enableEdgeToEdge()
 
         // Keep the splash screen on screen until authentication is complete
@@ -575,7 +582,7 @@ class MainActivity : ComponentActivity() {
                             }
                         )
                     },
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().imePadding(), // Ensure imePadding is here
                     contentWindowInsets = WindowInsets(0, 0, 0, 0)
                 ) { innerPadding ->
                     if (urlToLoad == null) {
