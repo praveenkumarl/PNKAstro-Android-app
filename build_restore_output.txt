@@ -1,0 +1,195 @@
+Starting a Gradle Daemon, 1 incompatible Daemon could not be reused, use --status for details
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDevDebugBuild UP-TO-DATE
+> Task :app:mergeDevDebugNativeDebugMetadata NO-SOURCE
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:generateDevDebugBuildConfig
+> Task :app:checkDevDebugAarMetadata
+> Task :app:generateDevDebugResValues
+> Task :app:mapDevDebugSourceSetPaths
+> Task :app:generateDevDebugResources
+> Task :app:packageDevDebugResources
+> Task :app:createDevDebugCompatibleScreenManifests
+> Task :app:extractDeepLinksDevDebug
+> Task :app:parseDevDebugLocalResources
+> Task :app:mergeDevDebugResources
+
+> Task :app:processDevDebugMainManifest
+package="com.pnkastro.pas" found in source AndroidManifest.xml: D:\praveen\PAS\app\src\main\AndroidManifest.xml.
+Setting the namespace via the package attribute in the source AndroidManifest.xml is no longer supported, and the value is ignored.
+Recommendation: remove package="com.pnkastro.pas" from the source AndroidManifest.xml: D:\praveen\PAS\app\src\main\AndroidManifest.xml.
+
+> Task :app:processDevDebugManifest
+> Task :app:javaPreCompileDevDebug
+> Task :app:mergeDevDebugShaders
+> Task :app:compileDevDebugShaders NO-SOURCE
+> Task :app:generateDevDebugAssets UP-TO-DATE
+> Task :app:mergeDevDebugAssets
+> Task :app:compressDevDebugAssets
+> Task :app:desugarDevDebugFileDependencies
+> Task :app:mergeDevDebugJniLibFolders
+> Task :app:checkDevDebugDuplicateClasses
+> Task :app:mergeDevDebugNativeLibs
+> Task :app:processDevDebugManifestForPackage
+> Task :app:mergeLibDexDevDebug
+> Task :app:validateSigningDevDebug
+> Task :app:writeDevDebugAppMetadata
+> Task :app:writeDevDebugSigningConfigVersions
+> Task :app:prePreprodDebugBuild UP-TO-DATE
+> Task :app:mergePreprodDebugNativeDebugMetadata NO-SOURCE
+
+> Task :app:stripDevDebugDebugSymbols
+Unable to strip the following libraries, packaging them as they are: libandroidx.graphics.path.so.
+
+> Task :app:generatePreprodDebugBuildConfig
+> Task :app:checkPreprodDebugAarMetadata
+> Task :app:generatePreprodDebugResValues
+> Task :app:mapPreprodDebugSourceSetPaths
+> Task :app:generatePreprodDebugResources
+> Task :app:processDevDebugResources
+> Task :app:mergeExtDexDevDebug
+> Task :app:mergePreprodDebugResources
+> Task :app:packagePreprodDebugResources
+> Task :app:parsePreprodDebugLocalResources
+> Task :app:createPreprodDebugCompatibleScreenManifests
+> Task :app:extractDeepLinksPreprodDebug
+
+> Task :app:processPreprodDebugMainManifest
+package="com.pnkastro.pas" found in source AndroidManifest.xml: D:\praveen\PAS\app\src\main\AndroidManifest.xml.
+Setting the namespace via the package attribute in the source AndroidManifest.xml is no longer supported, and the value is ignored.
+Recommendation: remove package="com.pnkastro.pas" from the source AndroidManifest.xml: D:\praveen\PAS\app\src\main\AndroidManifest.xml.
+
+> Task :app:processPreprodDebugManifest
+> Task :app:javaPreCompilePreprodDebug
+> Task :app:processPreprodDebugManifestForPackage
+> Task :app:mergePreprodDebugShaders
+> Task :app:compilePreprodDebugShaders NO-SOURCE
+> Task :app:generatePreprodDebugAssets UP-TO-DATE
+> Task :app:mergePreprodDebugAssets
+> Task :app:compressPreprodDebugAssets
+> Task :app:desugarPreprodDebugFileDependencies
+> Task :app:mergePreprodDebugJniLibFolders
+> Task :app:checkPreprodDebugDuplicateClasses
+> Task :app:mergePreprodDebugNativeLibs
+> Task :app:mergeLibDexPreprodDebug
+> Task :app:processPreprodDebugResources
+
+> Task :app:stripPreprodDebugDebugSymbols
+Unable to strip the following libraries, packaging them as they are: libandroidx.graphics.path.so.
+
+> Task :app:validateSigningPreprodDebug
+> Task :app:writePreprodDebugAppMetadata
+> Task :app:writePreprodDebugSigningConfigVersions
+> Task :app:preProdDebugBuild UP-TO-DATE
+> Task :app:mergeProdDebugNativeDebugMetadata NO-SOURCE
+> Task :app:generateProdDebugBuildConfig
+> Task :app:compileDevDebugKotlin
+> Task :app:checkProdDebugAarMetadata
+> Task :app:mergeExtDexPreprodDebug
+> Task :app:generateProdDebugResValues
+> Task :app:mapProdDebugSourceSetPaths
+> Task :app:generateProdDebugResources
+> Task :app:compilePreprodDebugKotlin
+> Task :app:mergeProdDebugResources
+> Task :app:packageProdDebugResources
+> Task :app:createProdDebugCompatibleScreenManifests
+> Task :app:parseProdDebugLocalResources
+> Task :app:extractDeepLinksProdDebug
+
+> Task :app:processProdDebugMainManifest
+package="com.pnkastro.pas" found in source AndroidManifest.xml: D:\praveen\PAS\app\src\main\AndroidManifest.xml.
+Setting the namespace via the package attribute in the source AndroidManifest.xml is no longer supported, and the value is ignored.
+Recommendation: remove package="com.pnkastro.pas" from the source AndroidManifest.xml: D:\praveen\PAS\app\src\main\AndroidManifest.xml.
+
+> Task :app:processProdDebugManifest
+> Task :app:javaPreCompileProdDebug
+> Task :app:processProdDebugManifestForPackage
+> Task :app:mergeProdDebugShaders
+> Task :app:compileProdDebugShaders NO-SOURCE
+> Task :app:generateProdDebugAssets UP-TO-DATE
+> Task :app:mergeProdDebugAssets
+> Task :app:compressProdDebugAssets
+> Task :app:checkProdDebugDuplicateClasses
+> Task :app:desugarProdDebugFileDependencies
+> Task :app:processProdDebugResources
+> Task :app:mergeExtDexProdDebug
+> Task :app:mergeLibDexProdDebug
+> Task :app:mergeProdDebugJniLibFolders
+> Task :app:mergeProdDebugNativeLibs
+
+> Task :app:stripProdDebugDebugSymbols
+Unable to strip the following libraries, packaging them as they are: libandroidx.graphics.path.so.
+
+> Task :app:validateSigningProdDebug
+> Task :app:writeProdDebugAppMetadata
+> Task :app:writeProdDebugSigningConfigVersions
+
+> Task :app:compileDevDebugKotlin
+w: file:///D:/praveen/PAS/app/src/main/java/com/pnkastro/pas/MainActivity.kt:153:22 'fun release(): Unit' is deprecated. Deprecated in Java.
+w: file:///D:/praveen/PAS/app/src/main/java/com/pnkastro/pas/MainActivity.kt:225:15 'fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Unit' is deprecated. This method has been deprecated in favor of using the Activity Result API
+      which brings increased type safety via an {@link ActivityResultContract} and the prebuilt
+      contracts for common intents available in
+      {@link androidx.activity.result.contract.ActivityResultContracts}, provides hooks for
+      testing, and allow receiving results in separate, testable classes independent from your
+      activity. Use
+      {@link #registerForActivityResult(ActivityResultContract, ActivityResultCallback)}
+      with the appropriate {@link ActivityResultContract} and handling the result in the
+      {@link ActivityResultCallback#onActivityResult(Object) callback}.
+w: file:///D:/praveen/PAS/app/src/main/java/com/pnkastro/pas/MainActivity.kt:524:65 'val scale: Float' is deprecated. Deprecated in Java.
+
+> Task :app:compilePreprodDebugKotlin
+w: file:///D:/praveen/PAS/app/src/main/java/com/pnkastro/pas/MainActivity.kt:153:22 'fun release(): Unit' is deprecated. Deprecated in Java.
+w: file:///D:/praveen/PAS/app/src/main/java/com/pnkastro/pas/MainActivity.kt:225:15 'fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Unit' is deprecated. This method has been deprecated in favor of using the Activity Result API
+      which brings increased type safety via an {@link ActivityResultContract} and the prebuilt
+      contracts for common intents available in
+      {@link androidx.activity.result.contract.ActivityResultContracts}, provides hooks for
+      testing, and allow receiving results in separate, testable classes independent from your
+      activity. Use
+      {@link #registerForActivityResult(ActivityResultContract, ActivityResultCallback)}
+      with the appropriate {@link ActivityResultContract} and handling the result in the
+      {@link ActivityResultCallback#onActivityResult(Object) callback}.
+w: file:///D:/praveen/PAS/app/src/main/java/com/pnkastro/pas/MainActivity.kt:524:65 'val scale: Float' is deprecated. Deprecated in Java.
+
+> Task :app:compilePreprodDebugJavaWithJavac
+> Task :app:compileDevDebugJavaWithJavac
+> Task :app:processDevDebugJavaRes
+> Task :app:compileProdDebugKotlin
+> Task :app:dexBuilderDevDebug
+> Task :app:processPreprodDebugJavaRes
+> Task :app:mergeProjectDexDevDebug
+
+> Task :app:compileProdDebugKotlin
+w: file:///D:/praveen/PAS/app/src/main/java/com/pnkastro/pas/MainActivity.kt:153:22 'fun release(): Unit' is deprecated. Deprecated in Java.
+w: file:///D:/praveen/PAS/app/src/main/java/com/pnkastro/pas/MainActivity.kt:225:15 'fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Unit' is deprecated. This method has been deprecated in favor of using the Activity Result API
+      which brings increased type safety via an {@link ActivityResultContract} and the prebuilt
+      contracts for common intents available in
+      {@link androidx.activity.result.contract.ActivityResultContracts}, provides hooks for
+      testing, and allow receiving results in separate, testable classes independent from your
+      activity. Use
+      {@link #registerForActivityResult(ActivityResultContract, ActivityResultCallback)}
+      with the appropriate {@link ActivityResultContract} and handling the result in the
+      {@link ActivityResultCallback#onActivityResult(Object) callback}.
+w: file:///D:/praveen/PAS/app/src/main/java/com/pnkastro/pas/MainActivity.kt:524:65 'val scale: Float' is deprecated. Deprecated in Java.
+
+> Task :app:mergeDevDebugJavaResource
+> Task :app:dexBuilderPreprodDebug
+> Task :app:mergePreprodDebugJavaResource
+> Task :app:mergeProjectDexPreprodDebug
+> Task :app:compileProdDebugJavaWithJavac
+> Task :app:processProdDebugJavaRes
+> Task :app:packageDevDebug
+> Task :app:createDevDebugApkListingFileRedirect
+> Task :app:assembleDevDebug
+> Task :app:dexBuilderProdDebug
+> Task :app:packagePreprodDebug
+> Task :app:createPreprodDebugApkListingFileRedirect
+> Task :app:assemblePreprodDebug
+> Task :app:mergeProjectDexProdDebug
+> Task :app:mergeProdDebugJavaResource
+> Task :app:packageProdDebug
+> Task :app:createProdDebugApkListingFileRedirect
+> Task :app:assembleProdDebug
+> Task :app:assembleDebug
+
+BUILD SUCCESSFUL in 3m 45s
+108 actionable tasks: 108 executed

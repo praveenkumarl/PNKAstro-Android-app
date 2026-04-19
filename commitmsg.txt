@@ -1,0 +1,1 @@
+Fix: exit app on home screen back press; add 'Exit' menu item after About

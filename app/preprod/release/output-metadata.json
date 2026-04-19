@@ -11,9 +11,9 @@
       "type": "SINGLE",
       "filters": [],
       "attributes": [],
-      "versionCode": 4,
-      "versionName": "4.0-preprod",
-      "outputFile": "app-preprod-release.apk"
+      "versionCode": 5,
+      "versionName": "5.0-preprod",
+      "outputFile": "PNKAstro-preprod-release-v5.0-preprod.apk"
     }
   ],
   "elementType": "File",
@@ -22,14 +22,14 @@
       "minApi": 28,
       "maxApi": 30,
       "baselineProfiles": [
-        "baselineProfiles/1/app-preprod-release.dm"
+        "baselineProfiles/1/PNKAstro-preprod-release-v5.0-preprod.dm"
       ]
     },
     {
       "minApi": 31,
       "maxApi": 2147483647,
       "baselineProfiles": [
-        "baselineProfiles/0/app-preprod-release.dm"
+        "baselineProfiles/0/PNKAstro-preprod-release-v5.0-preprod.dm"
       ]
     }
   ],

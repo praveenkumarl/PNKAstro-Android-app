@@ -46,6 +46,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
+import androidx.compose.foundation.BorderStroke
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
@@ -318,6 +319,11 @@ class MainActivity : ComponentActivity() {
                     webUrlState.value = newUrl ?: finalUrl
                 }
             }
+        } else if (requestCode == TRIAL_REQUEST_CODE) {
+            // Trial activity finished without RESULT_OK (user cancelled or error). Show optional error message if provided.
+            val err = data?.getStringExtra("error_message") ?: "Trial cancelled or failed"
+            Toast.makeText(this, err, Toast.LENGTH_LONG).show()
+            Log.w(TAG, "onActivityResult: TrialWebViewActivity returned non-OK ($resultCode) extras=${data?.extras}")
         }
     }
 
@@ -439,8 +445,13 @@ class MainActivity : ComponentActivity() {
                         webUrlState.value = newUrl ?: finalUrl
                     }
                 }
+            } else {
+                // Non-OK result (cancel or error) from TrialWebViewActivity
+                val err = data?.getStringExtra("error_message") ?: "Trial cancelled or failed"
+                Toast.makeText(this, err, Toast.LENGTH_LONG).show()
+                Log.w(TAG, "trialLauncher: non-OK result from TrialWebViewActivity ($resultCode) extras=${data?.extras}")
             }
-        }
+         }
 
         // Request location permissions on app load if not already granted
         val hasFine = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
@@ -1391,15 +1402,12 @@ fun WebViewScreen(url: String, allowedHost: String?, permissionStatus: Boolean, 
                                                                 if (retryLen <= 2 && title.isEmpty() && snippet.isEmpty()) {
                                                                     Log.w("WebView", "Final detection: marking page as failed (len=$retryLen titleEmpty=${title.isEmpty()} snippetEmpty=${snippet.isEmpty()})")
                                                                     pageFailed.value = true
-                                                                } else {
-                                                                    pageFailed.value = false
                                                                 }
+                                                                // REMOVED: else { pageFailed.value = false } - Stop auto-clearing error state
                                                             }
                                                         }
                                                     } catch (e: Exception) {
                                                         Log.w("WebView", "Retry JS probe (title/snippet) failed: ${e.message}")
-                                                        // If probing fails, be conservative and don't mark failed immediately
-                                                        pageFailed.value = false
                                                     }
 
                                                 }
@@ -1412,9 +1420,8 @@ fun WebViewScreen(url: String, allowedHost: String?, permissionStatus: Boolean, 
                                         Log.w("WebView", "postDelayed failed: ${e.message}")
                                         pageFailed.value = true
                                     }
-                                } else {
-                                    pageFailed.value = false
                                 }
+                                // REMOVED: else { pageFailed.value = false } - Stop auto-clearing error state
                             }
 
                             // Also log document.title and a short body text snippet for immediate debugging
@@ -1538,27 +1545,30 @@ fun WebViewScreen(url: String, allowedHost: String?, permissionStatus: Boolean, 
 
         // Show an overlay error UI when page load fails
         if (pageFailed.value) {
-            Box(modifier = Modifier
-                .fillMaxSize()
-                .background(Color(0xAA000000)), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(text = "Page failed to load", color = Color.White)
-                    Button(onClick = {
-                        pageFailed.value = false
-                        val w = webViewRef.value
-                        if (w != null) {
-                            try {
-                                Log.d("WebView", "Retrying load for: ${w.url}")
-                                w.reload()
-                            } catch (e: Exception) {
-                                Log.e("WebView", "Retry failed: ${e.message}")
-                            }
+            val ctx = LocalContext.current
+            WebViewErrorOverlay(
+                message = if (!isNetworkAvailable(ctx)) "No Internet Connection" else "Page failed to load",
+                onRetry = {
+                    pageFailed.value = false
+                    val w = webViewRef.value
+                    if (w != null) {
+                        try {
+                            Log.d("WebView", "Retrying load for: ${'$'}{w.url}")
+                            w.reload()
+                        } catch (e: Exception) {
+                            Log.e("WebView", "Retry failed: ${e.message}")
                         }
-                    }) {
-                        Text(text = "Retry")
+                    }
+                },
+                onExit = {
+                    try {
+                        val act = (ctx as? ComponentActivity)
+                        act?.finish()
+                    } catch (e: Exception) {
+                        Log.w("WebView", "Exit action failed: ${e.message}")
                     }
                 }
-            }
+            )
         }
     }
 
@@ -1586,6 +1596,18 @@ fun findWebViewInView(view: android.view.View): WebView? {
         }
     }
     return null
+}
+
+// Helper to check network availability
+fun isNetworkAvailable(context: Context): Boolean {
+    return try {
+        val cm = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+        val active = cm.activeNetwork ?: return false
+        val caps = cm.getNetworkCapabilities(active) ?: return false
+        caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    } catch (e: Exception) {
+        false
+    }
 }
 
 @Composable
@@ -1969,3 +1991,82 @@ fun sha256Hex(input: String): String {
     }
 }
 
+@Composable
+fun WebViewErrorOverlay(
+    message: String? = null,
+    onRetry: () -> Unit,
+    onExit: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    // Make it fully opaque and full screen
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(Color(0xFF1a1a2e)), // Dark solid background
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize() // Fills whole screen
+                .padding(32.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // Red error icon in a circular faint-red background
+            Icon(
+                imageVector = Icons.Default.Close,
+                contentDescription = "Error",
+                modifier = Modifier
+                    .size(80.dp)
+                    .background(
+                        color = Color.Red.copy(alpha = 0.3f),
+                        shape = CircleShape
+                    )
+                    .padding(16.dp),
+                tint = Color.Red
+            )
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Title
+            Text(
+                text = message ?: "Connection Error",
+                color = Color.White,
+                style = MaterialTheme.typography.headlineSmall,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Secondary message (Generic)
+            Text(
+                text = "Please check your settings or try again later.",
+                color = Color(0xFFBBBBBB),
+                style = MaterialTheme.typography.bodyMedium,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
+
+            Spacer(modifier = Modifier.height(40.dp))
+
+            // Buttons
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally)
+            ) {
+                Button(
+                    onClick = onRetry,
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                ) {
+                    Text("Retry")
+                }
+
+                OutlinedButton(
+                    onClick = onExit,
+                    border = BorderStroke(1.dp, Color.White)
+                ) {
+                    Text("Exit", color = Color.White)
+                }
+            }
+        }
+    }
+}
