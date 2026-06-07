@@ -16,8 +16,8 @@ android {
         applicationId = "com.pnkastro.pas"
         minSdk = 24
         targetSdk = 35
-        versionCode = 8
-        versionName = "8.0"
+        versionCode = 81
+        versionName = "8.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

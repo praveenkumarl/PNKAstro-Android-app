@@ -77,6 +77,11 @@ import java.io.FileOutputStream
 import java.security.MessageDigest
 import java.util.UUID
 import org.json.JSONObject
+import android.app.DownloadManager
+import android.os.Environment
+import android.util.Base64
+import android.webkit.JavascriptInterface
+import androidx.annotation.Keep
 
 class MainActivity : ComponentActivity() {
     private val TAG = "PAS_AUTH"
@@ -87,6 +92,10 @@ class MainActivity : ComponentActivity() {
     // Use Activity Result API launcher for trial flow (reliable delivery)
     private lateinit var trialLauncher: ActivityResultLauncher<android.content.Intent>
     private val TRIAL_REQUEST_CODE = 1001 // legacy constant (kept for compatibility)
+
+    // Variables to track background timeout
+    private var backgroundTime: Long = 0L
+    private val BACKGROUND_TIMEOUT_MS = 15 * 60 * 1000L // 15 minutes (change as needed)
 
     // Centralized launcher for the trial flow so both options menu and Compose UI can invoke it
     private fun launchTrialFlow() {
@@ -593,7 +602,10 @@ class MainActivity : ComponentActivity() {
                             }
                         )
                     },
-                    modifier = Modifier.fillMaxSize().imePadding(), // Ensure imePadding is here
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .navigationBarsPadding() //to display app above the phone's navigation bar
+                        .imePadding(), // Ensure imePadding is here
                     contentWindowInsets = WindowInsets(0, 0, 0, 0)
                 ) { innerPadding ->
                     if (urlToLoad == null) {
@@ -1081,6 +1093,41 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onPause() {
+        super.onPause()
+        // Record the time the app is pushed to the background
+        backgroundTime = System.currentTimeMillis()
+    }
+
+    override fun onResume() {
+        super.onResume()
+
+        // Check if the app is returning from the background
+        if (backgroundTime > 0) {
+            val timeInBackground = System.currentTimeMillis() - backgroundTime
+
+            // If the time in background exceeds our threshold, restart the flow
+            if (timeInBackground > BACKGROUND_TIMEOUT_MS) {
+                Log.d(TAG, "App was in background for ${timeInBackground / 1000} seconds. Restarting auth flow.")
+
+                // 1. Set URL to null to instantly show your LoadingScreen
+                webUrlState.value = null
+
+                // 2. Re-run the original authentication flow
+                lifecycleScope.launch {
+                    val currentDeviceId = deviceIdValue.value ?: getSourceAndroidId()
+                    authenticateAndGetUrl(currentDeviceId) { newUrl ->
+                        webUrlState.value = newUrl
+                        allowedHostState.value = try { newUrl?.let { java.net.URL(it).host } } catch (e: Exception) { null }
+                    }
+                }
+            }
+        }
+
+        // Reset the timer so it doesn't trigger repeatedly while the app is in use
+        backgroundTime = 0L
+    }
+
 }
 
 @Composable
@@ -1248,14 +1295,18 @@ fun AboutAppDialog(
                         factory = { ctx -> WebView(ctx).apply {
                             settings.apply {
                                 javaScriptEnabled = true
+
                                 domStorageEnabled = true
                                 loadWithOverviewMode = true
                                 useWideViewPort = true
                                 setSupportZoom(true)
                                 builtInZoomControls = true
                                 displayZoomControls = false
+                                textZoom = 100
                             }
+
                             isNestedScrollingEnabled = true
+                            addJavascriptInterface(WebAppInterface(ctx), "Android")
                         } },
                         update = { web -> try { web.loadDataWithBaseURL(aboutBase, htmlContent.value ?: "", "text/html", "utf-8", null) } catch (e: Exception) { Log.w("AboutAppDialog","Failed to load HTML into WebView: ${e.message}") } },
                         modifier = Modifier
@@ -1315,6 +1366,7 @@ fun WebViewScreen(url: String, allowedHost: String?, permissionStatus: Boolean, 
                 // Enhanced settings for better compatibility
                 settings.apply {
                     javaScriptEnabled = true
+
                     domStorageEnabled = true
                     loadWithOverviewMode = true
                     useWideViewPort = true
@@ -1341,16 +1393,64 @@ fun WebViewScreen(url: String, allowedHost: String?, permissionStatus: Boolean, 
                     Log.w("WebView", "Failed to configure CookieManager: ${e.message}")
                 }
 
+                addJavascriptInterface(WebAppInterface(ctx), "Android")
+
                 webViewClient = object : WebViewClient() {
+                    // ⬇️ Add this to prevent total app crashes when OS kills the WebView in the background ⬇️
+                    override fun onRenderProcessGone(view: WebView?, detail: android.webkit.RenderProcessGoneDetail?): Boolean {
+                        Log.e("WebView", "WebView rendering process was killed by the OS to save memory.")
+                        // Returning true tells Android "I handled it, don't crash the app"
+                        // Since our onResume timer will catch the timeout, it will rebuild the UI automatically.
+                        return true
+                    }
+
                     override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-                        // Only intercept top-level (main frame) navigations; do not touch subresources like favicon/js/css
                         if (request == null || request.isForMainFrame == false) return false
 
                         val uri = request.url
-                        val host = uri.host
                         val urlString = uri.toString()
+                        val scheme = uri.scheme
+                        val host = uri.host
 
-                        // Intercept if it's our allowed host - always append fresh location for new navigations
+                        // 1. Handle intent:// URLs (Commonly used by Razorpay, Cashfree, PayU for GPay/PhonePe)
+                        if (urlString.startsWith("intent://")) {
+                            try {
+                                val intent = Intent.parseUri(urlString, Intent.URI_INTENT_SCHEME)
+                                val info = ctx.packageManager.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)
+
+                                if (info != null) {
+                                    // The app is installed, launch it
+                                    ctx.startActivity(intent)
+                                } else {
+                                    // The app is not installed, fallback to the browser URL if the gateway provided one
+                                    val fallbackUrl = intent.getStringExtra("browser_fallback_url")
+                                    if (fallbackUrl != null) {
+                                        view?.loadUrl(fallbackUrl)
+                                    } else {
+                                        Toast.makeText(ctx, "Payment app not found.", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                                return true // We handled the navigation
+                            } catch (e: Exception) {
+                                Log.e("WebView", "Failed to parse intent URI: ${e.message}")
+                                return true
+                            }
+                        }
+
+                        // 2. Handle direct UPI and Payment Deep Links (upi://, tez://, paytmmp://, etc.)
+                        if (scheme != null && !scheme.startsWith("http")) {
+                            try {
+                                val intent = Intent(Intent.ACTION_VIEW, uri)
+                                ctx.startActivity(intent)
+                                return true // We handled the navigation
+                            } catch (e: Exception) {
+                                Log.e("WebView", "No application can handle this request: $urlString")
+                                Toast.makeText(ctx, "App not installed to handle this action.", Toast.LENGTH_SHORT).show()
+                                return true // Prevent WebView from trying to load a broken scheme
+                            }
+                        }
+
+                        // 3. Existing logic for your allowedHost and custom location handling (http/https)
                         if (allowedHost == null || host == allowedHost) {
                             val activityForNav = (ctx as? ComponentActivity)
                             activityForNav?.lifecycleScope?.launch {
@@ -1361,7 +1461,8 @@ fun WebViewScreen(url: String, allowedHost: String?, permissionStatus: Boolean, 
                             }
                             return true
                         }
-                        return false // Let WebView handle navigation for other hosts
+
+                        return false // Let WebView natively handle standard http/https links for external hosts
                     }
 
                     override fun onPageFinished(view: WebView, url: String?) {
@@ -1474,16 +1575,67 @@ fun WebViewScreen(url: String, allowedHost: String?, permissionStatus: Boolean, 
                         return true
                     }
 
-                    // Handle window.open() calls so they load in the same WebView (prevents blank popup windows)
+                    // Handle window.open() calls gracefully (fixes the blank flash issue on payments)
                     override fun onCreateWindow(view: WebView?, isDialog: Boolean, isUserGesture: Boolean, resultMsg: android.os.Message?): Boolean {
                         try {
+                            val context = view?.context ?: return false
+
+                            // 1. Create a temporary, invisible WebView to intercept the popup's actual destination
+                            val tempWebView = WebView(context).apply {
+                                settings.javaScriptEnabled = true
+                            }
+
+                            tempWebView.webViewClient = object : WebViewClient() {
+                                override fun shouldOverrideUrlLoading(tempView: WebView?, request: WebResourceRequest?): Boolean {
+                                    if (request == null) return false
+                                    val uri = request.url
+                                    val urlString = uri.toString()
+                                    val scheme = uri.scheme
+
+                                    // 2. Intercept intent:// links from the popup window
+                                    if (urlString.startsWith("intent://")) {
+                                        try {
+                                            val intent = Intent.parseUri(urlString, Intent.URI_INTENT_SCHEME)
+                                            val info = context.packageManager.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)
+                                            if (info != null) {
+                                                context.startActivity(intent)
+                                            } else {
+                                                val fallbackUrl = intent.getStringExtra("browser_fallback_url")
+                                                if (fallbackUrl != null) view?.loadUrl(fallbackUrl)
+                                            }
+                                            return true
+                                        } catch (e: Exception) {
+                                            Log.e("WebView", "Popup intent failed: ${e.message}")
+                                            return true
+                                        }
+                                    }
+
+                                    // 3. Intercept direct upi:// or app deep links from the popup
+                                    if (scheme != null && !scheme.startsWith("http")) {
+                                        try {
+                                            val intent = Intent(Intent.ACTION_VIEW, uri)
+                                            context.startActivity(intent)
+                                            return true
+                                        } catch (e: Exception) {
+                                            Log.e("WebView", "Popup deep link failed: $urlString")
+                                            return true
+                                        }
+                                    }
+
+                                    // 4. Fallback: If it's a regular web link (https://), pass it back to the main app WebView
+                                    view?.loadUrl(urlString)
+                                    return true
+                                }
+                            }
+
+                            // 5. Direct the popup transport message into our interceptor instead of the main WebView
                             val transport = resultMsg?.obj as? WebView.WebViewTransport
-                            // Use the originating WebView to receive popup content so it renders in-place
-                            transport?.webView = view
+                            transport?.webView = tempWebView
                             resultMsg?.sendToTarget()
                             return true
+
                         } catch (e: Exception) {
-                            Log.w("WebView", "onCreateWindow failed: " + e.message)
+                            Log.w("WebView", "onCreateWindow fallback failed: " + e.message)
                         }
                         return false
                     }
@@ -1515,6 +1667,70 @@ fun WebViewScreen(url: String, allowedHost: String?, permissionStatus: Boolean, 
 
                     Log.d("WebView", "Initial load with location: $finalUrl")
                     loadUrl(finalUrl)
+                }
+
+                // ⬇️ DOWNLOAD LISTENER BLOCK ⬇️
+                setDownloadListener { url, userAgent, contentDisposition, mimetype, contentLength ->
+                    try {
+                        // Handle client-side generated PDFs (blob: URLs) from html2pdf.js
+                        if (url.startsWith("blob:")) {
+                            Toast.makeText(ctx, "Generating PDF...", Toast.LENGTH_SHORT).show()
+
+                            // Inject JS to fetch the blob, convert to base64, and pass to our WebAppInterface
+                            val js = """
+                                javascript:(function() {
+                                    var xhr = new XMLHttpRequest();
+                                    xhr.open('GET', '$url', true);
+                                    xhr.responseType = 'blob';
+                                    xhr.onload = function(e) {
+                                        if (this.status == 200) {
+                                            var blob = this.response;
+                                            var reader = new FileReader();
+                                            reader.readAsDataURL(blob);
+                                            reader.onloadend = function() {
+                                                var base64data = reader.result;
+                                                // Send the data to Android
+                                                Android.getBase64FromBlobData(base64data, '$mimetype', 'Numerology_Report.pdf');
+                                            }
+                                        }
+                                    };
+                                    xhr.send();
+                                })();
+                            """.trimIndent()
+
+                            evaluateJavascript(js, null)
+                            return@setDownloadListener
+                        }
+
+                        // Safety check for normal URLs (DownloadManager only supports HTTP/HTTPS)
+                        if (!url.startsWith("http://", ignoreCase = true) && !url.startsWith("https://", ignoreCase = true)) {
+                            Toast.makeText(ctx, "Unsupported download format.", Toast.LENGTH_LONG).show()
+                            return@setDownloadListener
+                        }
+
+                        // Normal HTTP/HTTPS download handling...
+                        val request = DownloadManager.Request(android.net.Uri.parse(url)).apply {
+                            setMimeType(mimetype)
+                            val cookies = android.webkit.CookieManager.getInstance().getCookie(url)
+                            if (cookies != null) addRequestHeader("cookie", cookies)
+                            addRequestHeader("User-Agent", userAgent)
+
+                            val fileName = android.webkit.URLUtil.guessFileName(url, contentDisposition, mimetype)
+                            setTitle(fileName)
+                            setDescription("Downloading file...")
+                            setAllowedNetworkTypes(DownloadManager.Request.NETWORK_WIFI or DownloadManager.Request.NETWORK_MOBILE)
+                            setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                            setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_DOWNLOADS, fileName)
+                        }
+
+                        val downloadManager = ctx.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+                        downloadManager.enqueue(request)
+                        Toast.makeText(ctx, "Download started...", Toast.LENGTH_SHORT).show()
+
+                    } catch (e: Exception) {
+                        Log.e("WebView", "Download enqueue failed: ${e.message}", e)
+                        Toast.makeText(ctx, "Error: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                    }
                 }
             }
         }, update = { webview ->
@@ -1572,15 +1788,61 @@ fun WebViewScreen(url: String, allowedHost: String?, permissionStatus: Boolean, 
         }
     }
 
-    // Handle back press: if WebView can go back, go back; otherwise let Activity handle it
+    // Handle back press: Custom logic for history, fallback to home, and backgrounding
     BackHandler {
         val webView = findWebViewInView(rootView)
-        if (webView != null && webView.canGoBack()) {
-            webView.goBack()
+        val activity = rootView.context as? ComponentActivity
+        val currentUrl = webView?.url ?: ""
+
+        // 1. Get the base SITE_URL dynamically without hardcoding
+        val siteUrl = try {
+            if (BuildConfig.SITE_URL.isNotBlank()) {
+                BuildConfig.SITE_URL
+            } else {
+                context.getString(R.string.site_url)
+            }
+        } catch (e: Exception) {
+            context.getString(R.string.site_url)
+        }
+
+        // 2. Normalize to HTTPS (mirroring your authenticateAndGetUrl logic)
+        val secureSiteUrl = if (siteUrl.startsWith("http://", ignoreCase = true)) {
+            siteUrl.replaceFirst("http://", "https://", ignoreCase = true)
         } else {
-            // no more history: finish activity
-            val activity = rootView.context as? ComponentActivity
-            activity?.finish()
+            siteUrl
+        }
+
+        // 3. Determine the explicit home page URL (append index.php if not already present)
+        val homePageUrl = if (secureSiteUrl.endsWith("/")) {
+            "${secureSiteUrl}index.php"
+        } else if (!secureSiteUrl.contains("index.php", ignoreCase = true)) {
+            "$secureSiteUrl/index.php"
+        } else {
+            secureSiteUrl
+        }
+
+        // 4. Check if the user is currently on the home page (accounting for variations)
+        val isHomePage = currentUrl.contains("index.php", ignoreCase = true) ||
+                currentUrl.equals(secureSiteUrl, ignoreCase = true) ||
+                currentUrl.equals("$secureSiteUrl/", ignoreCase = true)
+
+        if (isHomePage) {
+            // If on the home page, send the app to the background instead of closing it
+            activity?.moveTaskToBack(true)
+        } else if (webView != null && webView.canGoBack()) {
+            // If there is valid web history, go to the previous page
+            webView.goBack()
+        } else if (webView != null) {
+            // Fallback: If no history exists and not on home page, force load dynamic home page
+            activity?.lifecycleScope?.launch {
+                // Ensure we append the location and key just like a fresh navigation
+                val finalUrl = buildUrlWithFreshLocation(context, homePageUrl, deviceId)
+                Log.d("WebView", "Back fallback triggered: Loading Home $finalUrl")
+                webView.loadUrl(finalUrl)
+            }
+        } else {
+            // Absolute fallback if everything fails
+            activity?.moveTaskToBack(true)
         }
     }
 }
@@ -2066,6 +2328,45 @@ fun WebViewErrorOverlay(
                 ) {
                     Text("Exit", color = Color.White)
                 }
+            }
+        }
+    }
+}
+
+class WebAppInterface(private val context: Context) {
+    @Keep
+    @JavascriptInterface
+    fun getBase64FromBlobData(base64Data: String, mimeType: String, fileName: String?) {
+        try {
+            // The base64 string comes in as "data:application/pdf;base64,JVBER..."
+            val base64 = base64Data.replaceFirst("^data:[^;]*;base64,".toRegex(), "")
+            val decodedBytes = Base64.decode(base64, Base64.DEFAULT)
+
+            // Save to the public Downloads folder
+            val downloadsPath =
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+
+            // Ensure the filename is safe and ends with .pdf
+            var safeFileName = fileName ?: "Numerology_Report_${System.currentTimeMillis()}.pdf"
+            if (!safeFileName.endsWith(".pdf", ignoreCase = true)) {
+                safeFileName += ".pdf"
+            }
+
+            val file = File(downloadsPath, safeFileName)
+
+            FileOutputStream(file).use { os ->
+                os.write(decodedBytes)
+            }
+
+            // Notify user on the main UI thread
+            (context as? android.app.Activity)?.runOnUiThread {
+                Toast.makeText(context, "Saved to Downloads: $safeFileName", Toast.LENGTH_LONG)
+                    .show()
+            }
+        } catch (e: Exception) {
+            Log.e("WebAppInterface", "Failed to save blob: ${e.message}")
+            (context as? android.app.Activity)?.runOnUiThread {
+                Toast.makeText(context, "Failed to save PDF.", Toast.LENGTH_SHORT).show()
             }
         }
     }

@@ -11,9 +11,9 @@
       "type": "SINGLE",
       "filters": [],
       "attributes": [],
-      "versionCode": 7,
-      "versionName": "7.0",
-      "outputFile": "PNKAstro-prod-release-v7.0.apk"
+      "versionCode": 81,
+      "versionName": "8.1",
+      "outputFile": "PNKAstro-prod-release-v8.1.apk"
     }
   ],
   "elementType": "File",
@@ -22,14 +22,14 @@
       "minApi": 28,
       "maxApi": 30,
       "baselineProfiles": [
-        "baselineProfiles/1/PNKAstro-prod-release-v7.0.dm"
+        "baselineProfiles/1/PNKAstro-prod-release-v8.1.dm"
       ]
     },
     {
       "minApi": 31,
       "maxApi": 2147483647,
       "baselineProfiles": [
-        "baselineProfiles/0/PNKAstro-prod-release-v7.0.dm"
+        "baselineProfiles/0/PNKAstro-prod-release-v8.1.dm"
       ]
     }
   ],

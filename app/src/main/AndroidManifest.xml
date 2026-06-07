@@ -10,6 +10,22 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
+
+    <!-- ⬇️ Add this block for UPI app visibility ⬇️ -->
+    <queries>
+        <!-- For direct UPI deep links -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="upi" />
+        </intent>
+        <!-- Specifically for Google Pay -->
+        <package android:name="com.google.android.apps.nbu.paisa.user" />
+        <!-- Specifically for PhonePe -->
+        <package android:name="com.phonepe.app" />
+        <!-- Specifically for Paytm -->
+        <package android:name="net.one97.paytm" />
+    </queries>
+
     <application
         android:name=".PASApplication"
         android:allowBackup="true"
