@@ -12,7 +12,9 @@ composeBom = "2024.09.00"
 coreSplashscreen = "1.2.0"
 fragmentVersion = "1.8.1"
 appcompat = "1.7.1"
+playServicesAds = "25.3.0"
 webkit = "1.15.0"
+playServicesAdsApi = "25.3.0"
 
 [libraries]
 androidx-browser-v1100 = { module = "androidx.browser:browser", version.ref = "browser" }
@@ -38,6 +40,8 @@ kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-
 google-play-services-location = { group = "com.google.android.gms", name = "play-services-location", version = "21.3.0" }
 browser = { group = "androidx.browser", name = "browser", version = "1.8.0" }
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version = "4.12.0" }
+play-services-ads = { module = "com.google.android.gms:play-services-ads", version.ref = "playServicesAds" }
+play-services-ads-api = { group = "com.google.android.gms", name = "play-services-ads-api", version.ref = "playServicesAdsApi" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="CopilotDiffPersistence">
+    <option name="pendingDiffs">
+      <map>
+        <entry key="$PROJECT_DIR$/AUTOCOMMIT_MESSAGE.txt">
+          <value>
+            <PendingDiffInfo>
+              <option name="filePath" value="$PROJECT_DIR$/AUTOCOMMIT_MESSAGE.txt" />
+              <option name="updatedContent" value="Add PDF download/share handling, integrate AdMob, and update manifest permissions&#10;&#10;Implemented download and share flow for PDFs with correct URI/FileProvider handling and share intents.&#10;Integrated Google AdMob: added SDK dependency and initialization in `PASApplication`, and added AdMob app id meta-data in `app/src/main/AndroidManifest.xml` and related Gradle updates in `app/build.gradle`.&#10;Updated `app/src/main/AndroidManifest.xml` to include network and location permissions (`INTERNET`, `ACCESS_NETWORK_STATE`, `ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION`) and added a `queries` block to surface UPI apps and support `upi:` deep links (Google Pay, PhonePe, Paytm).&#10;Minor UI and activity adjustments for the PDF flow and safe FileProvider configuration; updated network security config and backup/data extraction meta-data where needed.&#10;&#10;Files of interest:&#10;- app/src/main/AndroidManifest.xml&#10;- app/build.gradle&#10;- app/src/main/java/com/pnkastro/pas/PASApplication.kt (AdMob init)&#10;- Activities handling PDF download/share and WebView flow&#10;&#10;Coherent changes: ensures runtime sharing works, ads initialize at app start, and UPI visibility plus location permissions are declared.&#10;" />
+            </PendingDiffInfo>
+          </value>
+        </entry>
+      </map>
+    </option>
+  </component>
+</project>

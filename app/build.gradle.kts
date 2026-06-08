@@ -142,5 +142,19 @@ dependencies {
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
 
+    implementation("com.google.android.gms:play-services-ads:23.6.0")
 
+    configurations.all {
+        resolutionStrategy.eachDependency {
+            if (requested.group == "com.google.android.gms") {
+                val name = requested.name
+                if (name == "play-services-ads" ||
+                    name == "play-services-ads-lite" ||
+                    name == "play-services-ads-base" ||
+                    name == "play-services-ads-api") {
+                    useVersion("23.6.0")
+                }
+            }
+        }
+    }
 }

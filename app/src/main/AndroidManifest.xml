@@ -44,6 +44,10 @@
             android:name="com.google.android.gms.clearcut_client.enable"
             android:value="false" />
 
+        <meta-data
+            android:name="com.google.android.gms.ads.APPLICATION_ID"
+            android:value="ca-app-pub-3622755242764694~4785984475" />
+
         <!-- SplashActivity is the launcher to ensure the splash layout shows first (not the adaptive icon fullscreen) -->
         <activity
             android:name=".SplashActivity"

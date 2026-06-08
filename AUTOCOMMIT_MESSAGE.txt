@@ -1,0 +1,15 @@
+Add PDF download/share handling, integrate AdMob, and update manifest permissions
+
+Implemented download and share flow for PDFs with correct URI/FileProvider handling and share intents.
+Integrated Google AdMob: added SDK dependency and initialization in `PASApplication`, and added AdMob app id meta-data in `app/src/main/AndroidManifest.xml` and related Gradle updates in `app/build.gradle`.
+Updated `app/src/main/AndroidManifest.xml` to include network and location permissions (`INTERNET`, `ACCESS_NETWORK_STATE`, `ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION`) and added a `queries` block to surface UPI apps and support `upi:` deep links (Google Pay, PhonePe, Paytm).
+Minor UI and activity adjustments for the PDF flow and safe FileProvider configuration; updated network security config and backup/data extraction meta-data where needed.
+
+Files of interest:
+- app/src/main/AndroidManifest.xml
+- app/build.gradle
+- app/src/main/java/com/pnkastro/pas/PASApplication.kt (AdMob init)
+- Activities handling PDF download/share and WebView flow
+
+Coherent changes: ensures runtime sharing works, ads initialize at app start, and UPI visibility plus location permissions are declared.
+

@@ -1,4 +1,5 @@
 package com.pnkastro.pas
+import com.pnkastro.pas.BuildConfig
 
 import android.content.Context
 import android.os.Bundle
@@ -78,10 +79,13 @@ import java.security.MessageDigest
 import java.util.UUID
 import org.json.JSONObject
 import android.app.DownloadManager
-import android.os.Environment
-import android.util.Base64
 import android.webkit.JavascriptInterface
 import androidx.annotation.Keep
+import com.google.android.gms.ads.LoadAdError
+import com.google.android.gms.ads.MobileAds
+import com.google.android.gms.ads.rewarded.RewardedAd
+import com.google.android.gms.ads.rewarded.RewardedAdLoadCallback
+import com.google.android.gms.ads.admanager.AdManagerAdRequest
 
 class MainActivity : ComponentActivity() {
     private val TAG = "PAS_AUTH"
@@ -96,6 +100,8 @@ class MainActivity : ComponentActivity() {
     // Variables to track background timeout
     private var backgroundTime: Long = 0L
     private val BACKGROUND_TIMEOUT_MS = 15 * 60 * 1000L // 15 minutes (change as needed)
+
+    private var rewardedAd: RewardedAd? = null //for admob
 
     // Centralized launcher for the trial flow so both options menu and Compose UI can invoke it
     private fun launchTrialFlow() {
@@ -343,6 +349,10 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         // Disable decor fits system windows to allow Compose to handle insets and IME padding correctly.
         androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
+
+        // ⬇️ INITIALIZE AND LOAD THE AD ⬇️
+        MobileAds.initialize(this) {}
+        loadRewardedAd()
 
         // Set soft input mode to adjust Resize so the window resizes when the keyboard appears.
         window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
@@ -1128,6 +1138,131 @@ class MainActivity : ComponentActivity() {
         backgroundTime = 0L
     }
 
+    // --- ADMOB & PDF SAVING LOGIC ---
+
+    private fun loadRewardedAd() {
+        val adRequest = AdManagerAdRequest.Builder().build()
+        // NOTE: This is Google's official Test Ad Unit ID for Rewarded Video.
+        // Replace it with your real Ad Unit ID from the AdMob dashboard before release.
+        RewardedAd.load(this, "ca-app-pub-3940256099942544/5224354917",
+            adRequest as AdManagerAdRequest, object : RewardedAdLoadCallback() {
+            override fun onAdFailedToLoad(adError: LoadAdError) {
+                Log.d("AdMob", "Ad failed to load: ${adError.message}")
+                rewardedAd = null
+            }
+            override fun onAdLoaded(ad: RewardedAd) {
+                Log.d("AdMob", "Ad was loaded.")
+                rewardedAd = ad
+            }
+        })
+    }
+
+    private fun showAdThenExecute(onRewardEarned: () -> Unit) {
+        if (rewardedAd != null) {
+            // Show the ad
+            rewardedAd?.show(this) { _ ->
+                // This block runs when the user finishes the video
+                Log.d("AdMob", "User earned the reward. Executing action...")
+                onRewardEarned()
+            }
+            // Nullify and load the next ad
+            rewardedAd = null
+            loadRewardedAd()
+        } else {
+            // Fallback: Ad wasn't loaded (no internet or no inventory). Let them proceed anyway.
+            Log.d("AdMob", "Ad wasn't ready. Proceeding without ad...")
+            onRewardEarned()
+            loadRewardedAd()
+        }
+    }
+
+    private fun savePdfToFileSystem(base64Data: String, fileName: String?) {
+        try {
+            val base64 = base64Data.replaceFirst("^data:[^;]*;base64,".toRegex(), "")
+            val decodedBytes = android.util.Base64.decode(base64, android.util.Base64.DEFAULT)
+
+            val downloadsPath = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+
+            var safeFileName = fileName ?: "Numerology_Report_${System.currentTimeMillis()}.pdf"
+            if (!safeFileName.endsWith(".pdf", ignoreCase = true)) {
+                safeFileName += ".pdf"
+            }
+
+            val file = java.io.File(downloadsPath, safeFileName)
+            java.io.FileOutputStream(file).use { os -> os.write(decodedBytes) }
+
+            Toast.makeText(this, "Saved to Downloads: $safeFileName", Toast.LENGTH_LONG).show()
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Failed to save PDF: ${e.message}")
+            Toast.makeText(this, "Failed to save PDF.", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // 1. Shows the popup asking the user what they want to do
+    fun handlePdfAction(base64Data: String, fileName: String?) {
+        val safeFileName = fileName ?: "Numerology_Report_${System.currentTimeMillis()}.pdf"
+        val finalFileName = if (!safeFileName.endsWith(".pdf", ignoreCase = true)) "$safeFileName.pdf" else safeFileName
+
+        val builder = android.app.AlertDialog.Builder(this)
+        builder.setTitle("Report Generated")
+        builder.setMessage("What would you like to do with this PDF?")
+
+        // SHARE BUTTON
+        builder.setPositiveButton("Share") { dialog, _ ->
+            dialog.dismiss()
+            // Play video, then share
+            showAdThenExecute { sharePdf(base64Data, finalFileName) }
+        }
+
+        // DOWNLOAD BUTTON
+        builder.setNegativeButton("Download") { dialog, _ ->
+            dialog.dismiss()
+            // Play video, then download to device
+            showAdThenExecute { savePdfToFileSystem(base64Data, finalFileName) }
+        }
+
+        builder.setNeutralButton("Cancel") { dialog, _ ->
+            dialog.dismiss()
+        }
+
+        builder.show()
+    }
+
+    // 2. Safely decodes the PDF into a temporary cache and shares it
+    private fun sharePdf(base64Data: String, fileName: String) {
+        try {
+            val base64 = base64Data.replaceFirst("^data:[^;]*;base64,".toRegex(), "")
+            val decodedBytes = android.util.Base64.decode(base64, android.util.Base64.DEFAULT)
+
+            // Save to the app's hidden cache directory (required for sharing)
+            val cachePath = java.io.File(cacheDir, "pdfs")
+            cachePath.mkdirs()
+            val file = java.io.File(cachePath, fileName)
+
+            java.io.FileOutputStream(file).use { os -> os.write(decodedBytes) }
+
+            // Generate a secure URI using the FileProvider you already setup for snapshots
+            val contentUri = androidx.core.content.FileProvider.getUriForFile(
+                this,
+                "$packageName.fileprovider",
+                file
+            )
+
+            if (contentUri != null) {
+                val shareIntent = Intent().apply {
+                    action = Intent.ACTION_SEND
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) // Grants Gmail/WhatsApp permission to read it
+                    setDataAndType(contentUri, "application/pdf")
+                    putExtra(Intent.EXTRA_STREAM, contentUri)
+                }
+                startActivity(Intent.createChooser(shareIntent, "Share PDF via"))
+            }
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Failed to share PDF: ${e.message}")
+            Toast.makeText(this, "Failed to prepare PDF for sharing.", Toast.LENGTH_SHORT).show()
+        }
+    }
+
 }
 
 @Composable
@@ -1543,9 +1678,28 @@ fun WebViewScreen(url: String, allowedHost: String?, permissionStatus: Boolean, 
 
                     override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
                         super.onReceivedError(view, request, error)
-                        // Only treat main-frame errors as fatal for the page; subresource errors (favicon/js) should be logged but not hide the page
                         if (request.isForMainFrame == true) {
-                            Log.e("WebView", "Received error loading ${request.url}: ${error.errorCode} ${error.description}")
+                            val errDesc = error.description.toString()
+                            Log.e("WebView", "Received error loading ${request.url}: ${error.errorCode} $errDesc")
+
+                            // 1. Intercept "Back Button" form cache misses
+                            if (errDesc.contains("ERR_CACHE_MISS", ignoreCase = true)) {
+                                Log.d("WebView", "Caught cache miss on back navigation. Falling back to home.")
+                                pageFailed.value = false // Prevent the error overlay
+
+                                val context = view.context
+                                val siteUrl = try { if (BuildConfig.SITE_URL.isNotBlank()) BuildConfig.SITE_URL else context.getString(R.string.site_url) } catch (e: Exception) { context.getString(R.string.site_url) }
+                                val secureSiteUrl = if (siteUrl.startsWith("http://", ignoreCase = true)) siteUrl.replaceFirst("http://", "https://", ignoreCase = true) else siteUrl
+                                val homePageUrl = if (secureSiteUrl.endsWith("/")) "${secureSiteUrl}index.php" else if (!secureSiteUrl.contains("index.php", ignoreCase = true)) "$secureSiteUrl/index.php" else secureSiteUrl
+
+                                (context as? ComponentActivity)?.lifecycleScope?.launch {
+                                    val finalUrl = buildUrlWithFreshLocation(context, homePageUrl, deviceId)
+                                    view.loadUrl(finalUrl)
+                                }
+                                return // Stop processing this error
+                            }
+
+                            // 2. Standard fatal network failures (No internet, DNS failed, etc.)
                             pageFailed.value = true
                         } else {
                             Log.w("WebView", "Subresource error ${request.url}: ${error.errorCode} ${error.description}")
@@ -1554,10 +1708,10 @@ fun WebViewScreen(url: String, allowedHost: String?, permissionStatus: Boolean, 
 
                     override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, errorResponse: WebResourceResponse) {
                         super.onReceivedHttpError(view, request, errorResponse)
-                        // Don't mark the whole page as failed for subresource HTTP errors like favicon 404
+                        // 3. Let the WebView render your PHP server's HTML error pages!
                         if (request.isForMainFrame == true) {
                             Log.e("WebView", "HTTP error ${errorResponse.statusCode} for ${request.url}")
-                            pageFailed.value = true
+                            // We explicitly DO NOT set pageFailed.value = true here anymore.
                         } else {
                             Log.w("WebView", "HTTP error ${errorResponse.statusCode} for subresource ${request.url}")
                         }
@@ -1790,6 +1944,11 @@ fun WebViewScreen(url: String, allowedHost: String?, permissionStatus: Boolean, 
 
     // Handle back press: Custom logic for history, fallback to home, and backgrounding
     BackHandler {
+        if (pageFailed.value) {
+            pageFailed.value = false
+            // Continue falling through so the logic safely returns them to the home page
+        }
+
         val webView = findWebViewInView(rootView)
         val activity = rootView.context as? ComponentActivity
         val currentUrl = webView?.url ?: ""
@@ -2334,40 +2493,14 @@ fun WebViewErrorOverlay(
 }
 
 class WebAppInterface(private val context: Context) {
+
     @Keep
     @JavascriptInterface
     fun getBase64FromBlobData(base64Data: String, mimeType: String, fileName: String?) {
-        try {
-            // The base64 string comes in as "data:application/pdf;base64,JVBER..."
-            val base64 = base64Data.replaceFirst("^data:[^;]*;base64,".toRegex(), "")
-            val decodedBytes = Base64.decode(base64, Base64.DEFAULT)
-
-            // Save to the public Downloads folder
-            val downloadsPath =
-                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-
-            // Ensure the filename is safe and ends with .pdf
-            var safeFileName = fileName ?: "Numerology_Report_${System.currentTimeMillis()}.pdf"
-            if (!safeFileName.endsWith(".pdf", ignoreCase = true)) {
-                safeFileName += ".pdf"
-            }
-
-            val file = File(downloadsPath, safeFileName)
-
-            FileOutputStream(file).use { os ->
-                os.write(decodedBytes)
-            }
-
-            // Notify user on the main UI thread
-            (context as? android.app.Activity)?.runOnUiThread {
-                Toast.makeText(context, "Saved to Downloads: $safeFileName", Toast.LENGTH_LONG)
-                    .show()
-            }
-        } catch (e: Exception) {
-            Log.e("WebAppInterface", "Failed to save blob: ${e.message}")
-            (context as? android.app.Activity)?.runOnUiThread {
-                Toast.makeText(context, "Failed to save PDF.", Toast.LENGTH_SHORT).show()
-            }
+        // Switch to the Main UI thread to show the popup dialogue
+        (context as? MainActivity)?.runOnUiThread {
+            // Trigger the Download vs Share prompt
+            (context as? MainActivity)?.handlePdfAction(base64Data, fileName)
         }
     }
 }
