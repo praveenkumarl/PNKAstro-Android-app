@@ -1,0 +1,6 @@
+{
+  "site_url": "https://pkastro.com/index.php",
+  "auth_url": "https://pkastro.com/auth.php",
+  "trial_url": "https://pkastro.com/new_registration_mobile_trial.php",
+  "admob_enabled": true
+}
