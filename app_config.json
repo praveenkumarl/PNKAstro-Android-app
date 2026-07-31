@@ -1,6 +1,20 @@
 {
-  "site_url": "https://pkastro.com/index.php",
-  "auth_url": "https://pkastro.com/auth.php",
-  "trial_url": "https://pkastro.com/new_registration_mobile_trial.php",
-  "admob_enabled": true
+  "DEV": {
+    "site_url": "https://127.0.0.1/pkastro_test/index.php",
+    "auth_url": "https://127.0.0.1/pkastro_test/athenticate_mobile.php",
+    "trial_url": "https://127.0.0.1/pkastro_test/new_registration_mobile_trial.php",
+    "admob_enabled": false
+  },
+  "PREPROD": {
+    "site_url": "https://pkastro.com/pnkastro_preprod/index.php",
+    "auth_url": "https://pkastro.com/pnkastro_preprod/athenticate_mobile.php",
+    "trial_url": "https://pkastro.com/pnkastro_preprod/new_registration_mobile_trial.php",
+    "admob_enabled": true
+  },
+  "PROD": {
+    "site_url": "https://pkastro.com/pnkastro_prod/index.php",
+    "auth_url": "https://pkastro.com/pnkastro_prod/athenticate_mobile.php",
+    "trial_url": "https://pkastro.com/pnkastro_prod/new_registration_mobile_trial.php",
+    "admob_enabled": true
+  }
 }
